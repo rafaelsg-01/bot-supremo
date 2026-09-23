@@ -42,6 +42,7 @@ class Navegador:
         )
 
     async def _abrir_chrome(self):
+        _remover_travas_do_perfil()
         _marcar_saida_limpa()
         log.info("abrindo o Chrome")
         self.chrome = await asyncio.create_subprocess_exec(
@@ -106,6 +107,24 @@ class Navegador:
             except psutil.Error:
                 pass
         return round(total / 1024 / 1024)
+
+
+def _remover_travas_do_perfil():
+    """Apaga o SingletonLock/Cookie/Socket que um Chrome anterior deixou no perfil.
+
+    A trava guarda o nome da máquina. Como o container usa a rede do "warp", o nome é o do warp,
+    que muda quando o warp é recriado (todo boot). Aí o Chrome acha que o perfil está aberto
+    "em outro computador" e para num aviso, sem abrir nada. Só existe um Chrome aqui, então apagar
+    é seguro (e o Chrome já foi fechado quando chegamos aqui).
+    """
+    for nome in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        caminho = os.path.join(config.DIR_PERFIL, nome)
+        try:
+            os.unlink(caminho)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.warning("não consegui apagar %s: %s", caminho, e)
 
 
 def _marcar_saida_limpa():

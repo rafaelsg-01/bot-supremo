@@ -85,11 +85,11 @@ def criar_api(ponte, navegador, fila):
         }
         return web.json_response(dados, status=200 if dados["ok"] else 503)
 
-    app = web.Application(middlewares=[autenticacao], client_max_size=1024 * 1024)
-    app.router.add_post("/v1/navegar", navegar)
     async def diagnostico(request):
         return web.json_response(await ponte.pedir("diagnostico"))
 
+    app = web.Application(middlewares=[autenticacao], client_max_size=1024 * 1024)
+    app.router.add_post("/v1/navegar", navegar)
     app.router.add_get("/saude", saude)
     app.router.add_get("/v1/diagnostico", diagnostico)
     return app
@@ -125,15 +125,23 @@ async def principal():
     for sinal in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sinal, parar.set)
 
-    async def avisar_se_extensao_nao_conectar():
-        try:
-            await asyncio.wait_for(ponte.conectada.wait(), 90)
-        except TimeoutError:
-            log.error("a extensão não conectou em 90s (confira a política e o chrome://extensions pelo VNC)")
+    async def vigiar_extensao():
+        """Se a extensão ficar desconectada por 2 min, reabre o Chrome (ex.: um aviso travou a janela)."""
+        desconectada_desde = loop.time()
+        while True:
+            await asyncio.sleep(15)
+            if ponte.conectada.is_set():
+                desconectada_desde = loop.time()
+                continue
+            if loop.time() - desconectada_desde >= 120:
+                log.error("a extensão está desconectada há 2 min; reabrindo o Chrome")
+                async with fila.trava:
+                    await navegador.reiniciar_chrome()
+                desconectada_desde = loop.time()
 
-    aviso = asyncio.create_task(avisar_se_extensao_nao_conectar())
+    vigia = asyncio.create_task(vigiar_extensao())
     await parar.wait()
-    aviso.cancel()
+    vigia.cancel()
     log.info("encerrando: fechando o Chrome")
     await navegador.fechar_chrome()
     await corredor_api.cleanup()

@@ -221,7 +221,13 @@ rede `flare-net`, apontando para `http://warp:8080`. A credencial do túnel fica
   um SOCKS), então tudo sai por ele (DNS, WebRTC, QUIC), sem flag de proxy no Chrome. A API fica em
   `warp:8080` para quem está na rede `flare-net` (e no IP do warp, visto do host). Efeito colateral:
   o `~/start.sh` recria o `warp` a cada boot e o nosso container perde a rede. O `atualizar.sh` percebe
-  isso e recria o nosso container.
+  isso e recria o nosso container (testado no reboot de 2026-09-23 12:00).
+  - O **IP do warp muda a cada boot** (já foi `172.18.0.2` e `172.18.0.3`). Pegue o atual com
+    `docker inspect -f '{{(index .NetworkSettings.Networks "flare-net").IPAddress}}' warp`.
+  - O **nome da máquina** dentro do nosso container é o do warp e também muda. O Chrome grava esse
+    nome na trava do perfil (`SingletonLock`) e, ao ver outro nome, acha que o perfil está aberto "em
+    outro computador" e trava num aviso. Por isso o serviço apaga as travas `Singleton*` antes de abrir
+    o Chrome. Se a extensão ainda assim ficar 2 min desconectada, o serviço reabre o Chrome sozinho.
 - VNC para depuração, ou para logar no Google no Chrome do bot: porta 5900 no IP do warp, com a senha
   do `.env`. De fora do notebook, use `ssh -L 5900:<ip-do-warp>:5900 servidor-caseiro`.
 - Se o IP do WARP for banido: refazer o registro do WARP gera um IP novo (os scripts antigos ficam
