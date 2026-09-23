@@ -37,7 +37,8 @@ principal() {
     id_warp="$(docker inspect -f '{{.Id}}' warp 2>/dev/null)" || { echo "container warp não existe; esperando"; exit 0; }
     [ "$(docker inspect -f '{{.State.Running}}' warp)" = "true" ] || { echo "warp parado; esperando"; exit 0; }
 
-    img_antes="$(docker compose "${arquivos[@]}" images -q bot 2>/dev/null | head -n1)"
+    # Os dois IDs no mesmo formato (sha256:...): o da imagem que o container usa e o da tag após o pull.
+    img_antes="$(docker inspect -f '{{.Image}}' bot-supremo 2>/dev/null)"
     if [ "$modo_dev" = 0 ]; then
         sudo -u "$dono" git pull --ff-only -q || echo "aviso: git pull falhou"
         docker compose "${arquivos[@]}" pull -q || echo "aviso: pull das imagens falhou"
@@ -46,7 +47,7 @@ principal() {
     if [ -f dados/tunel/credenciais.json ]; then
         docker compose "${arquivos[@]}" up -d tunel >/dev/null 2>&1 || echo "aviso: túnel não subiu"
     fi
-    img_depois="$(docker image inspect -f '{{.Id}}' "$(docker compose "${arquivos[@]}" config --images | head -n1)" 2>/dev/null)"
+    img_depois="$(docker image inspect -f '{{.Id}}' "$(docker compose "${arquivos[@]}" config --images | grep bot-supremo | head -n1)" 2>/dev/null)"
 
     rede="$(docker inspect -f '{{.HostConfig.NetworkMode}}' bot-supremo 2>/dev/null)"
     rodando="$(docker inspect -f '{{.State.Running}}' bot-supremo 2>/dev/null)"
