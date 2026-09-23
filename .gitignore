@@ -1,0 +1,36 @@
+# Segredos e configuração local
+.env
+.env.*
+!.env.exemplo
+
+# Perfil do Chrome (cookies, sessão, cache)
+perfil/
+chrome-profile/
+data/
+
+# Capturas de rede (net-export e afins)
+net-export*.json
+capturas/
+*.har
+
+# Chaves e dados do WARP
+content-warp/
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+
+# Sistema e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
