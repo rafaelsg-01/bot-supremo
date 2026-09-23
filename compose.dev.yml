@@ -1,0 +1,9 @@
+# Modo desenvolvimento: usa o código da pasta do notebook por cima da imagem, sem esperar o CI.
+# Ative com "touch .modo-dev" (o atualizar.sh passa a usar este arquivo e para de fazer pull).
+services:
+  bot:
+    volumes:
+      - ./servico:/opt/bot-supremo/servico:ro
+      - ./extensao:/opt/bot-supremo/extensao:ro
+      - ./docker/entrada.sh:/opt/bot-supremo/docker/entrada.sh:ro
+      - ./docker/xorg.conf:/etc/X11/bot-supremo.conf:ro

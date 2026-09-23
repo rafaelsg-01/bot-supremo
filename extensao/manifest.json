@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Bot Supremo - Observador",
+  "version": "1.0.0",
+  "description": "Observa a rede, lê o HTML e mede a posição de elementos. Não altera nenhuma página.",
+  "minimum_chrome_version": "120",
+  "permissions": ["tabs", "webRequest", "webNavigation", "scripting", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "fundo.js" }
+}

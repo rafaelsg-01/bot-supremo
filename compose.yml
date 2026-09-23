@@ -1,0 +1,32 @@
+# bot-supremo no notebook. Quem sobe e atualiza é o implantacao/atualizar.sh (timer do systemd).
+services:
+  bot:
+    image: ghcr.io/rafaelsg-01/bot-supremo:latest
+    container_name: bot-supremo
+    # Mesma rede do container "warp": tudo (DNS, WebRTC, QUIC) sai pelo WARP, sem flag de proxy.
+    # A API fica em warp:8080 para quem está na rede flare-net.
+    network_mode: "container:warp"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+    shm_size: 1g
+    mem_limit: 1800m
+    stop_grace_period: 30s
+    # GPU real e os terminais que o Xorg usa.
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/tty0:/dev/tty0
+      - /dev/tty7:/dev/tty7
+    cap_add:
+      - SYS_TTY_CONFIG
+    volumes:
+      # Perfil do Chrome (cookies, sessão, login do Google). Sobrevive a recriar o container.
+      - ./dados/perfil:/perfil
+      # Chave e pacote da extensão própria.
+      - ./dados/estado:/estado
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

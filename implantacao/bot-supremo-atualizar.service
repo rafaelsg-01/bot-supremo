@@ -1,0 +1,9 @@
+[Unit]
+Description=bot-supremo: atualiza a imagem e recria o container quando preciso
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=@DIR@/implantacao/atualizar.sh
+TimeoutStartSec=15min

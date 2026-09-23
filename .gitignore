@@ -3,10 +3,12 @@
 .env.*
 !.env.exemplo
 
-# Perfil do Chrome (cookies, sessão, cache)
+# Perfil do Chrome (cookies, sessão, cache) e chave da extensão
+dados/
 perfil/
 chrome-profile/
 data/
+.modo-dev
 
 # Capturas de rede (net-export e afins)
 net-export*.json

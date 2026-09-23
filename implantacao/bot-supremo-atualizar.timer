@@ -1,0 +1,10 @@
+[Unit]
+Description=bot-supremo: roda o atualizar.sh a cada 2 minutos
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
