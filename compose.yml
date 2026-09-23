@@ -20,6 +20,10 @@ services:
       - /dev/tty7:/dev/tty7
     cap_add:
       - SYS_TTY_CONFIG
+    # Perfil seccomp padrão do Docker + clone/unshare/setns liberados, para a sandbox do Chrome
+    # funcionar (nunca --no-sandbox). Gerado a partir de moby/profiles/seccomp/default.json.
+    security_opt:
+      - seccomp=docker/seccomp-chrome.json
     volumes:
       # Perfil do Chrome (cookies, sessão, login do Google). Sobrevive a recriar o container.
       - ./dados/perfil:/perfil
@@ -30,3 +34,32 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Túnel próprio da Cloudflare: bot.iptv01.asia -> http://warp:8080 (a API do serviço acima).
+  # A credencial fica em dados/tunel/credenciais.json e o ID do túnel no .env (TUNEL_ID).
+  tunel:
+    image: cloudflare/cloudflared:latest
+    container_name: bot-supremo-tunel
+    restart: unless-stopped
+    networks: [flare-net]
+    volumes:
+      - ./dados/tunel/credenciais.json:/etc/cloudflared/credenciais.json:ro
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --credentials-file
+      - /etc/cloudflared/credenciais.json
+      - --url
+      - http://warp:8080
+      - run
+      - ${TUNEL_ID}
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+networks:
+  flare-net:
+    external: true

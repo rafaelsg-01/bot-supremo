@@ -43,8 +43,7 @@ Se uma solução exigir quebrar este princípio, pare e converse com o dono ante
 
 ## Contrato da API
 
-O contrato abaixo descreve a **intenção**. Formato exato, nomes de campos e rotas ficam a critério de
-quem implementar. Documente aqui o que for decidido.
+O contrato abaixo descreve a **intenção**. O formato decidido está logo depois, em "Contrato decidido".
 
 **Entrada:**
 - `url`: o que abrir;
@@ -69,33 +68,131 @@ Exemplo do uso real pelo projeto-iptv:
 **Por que a URL do vídeo sai da rede e não do HTML:** o player do site baixa o vídeo por JavaScript,
 com headers próprios. O `<video>` só mostra um `blob:`, sem a URL real.
 
+### Contrato decidido (2026-09-23)
+
+**Não há compatibilidade com o formato do FlareSolverr** (`cmd`, `directJs` etc.). O projeto-iptv será
+reescrito para este contrato: em vez de mandar JavaScript para rodar no navegador, ele manda **ações
+declarativas** ("se o elemento X estiver na tela, clicar nele").
+
+`POST /v1/navegar`, com o header `Authorization: Bearer <BOT_TOKEN>`:
+
+```json
+{
+  "url": "https://...",
+  "acoes": [
+    { "quando": "desafio", "tipo": "clicar", "seletor": "input[type=checkbox]",
+      "frame": "challenges.cloudflare.com", "seExistir": true, "timeoutMs": 30000 },
+    { "tipo": "clicar", "seletor": "#botao-anuncio", "seExistir": true, "timeoutMs": 5000 },
+    { "tipo": "clicar", "seletor": "#play", "timeoutMs": 15000 },
+    { "tipo": "esperar", "ms": 2000 }
+  ],
+  "esperarRede": { "padrao": "\\.mp4", "timeoutMs": 30000 },
+  "html": true,
+  "timeoutMs": 60000
+}
+```
+
+- `clicar`: espera o seletor existir e estar visível (inclusive dentro de iframes e de shadow DOM,
+  aberto ou fechado) até `timeoutMs`. Se preciso, rola a página com a roda do mouse, move o mouse
+  numa curva e clica (xdotool). Se não aparecer: com `seExistir: true` segue em frente
+  (`resultado: "nao_existia"`); senão o pedido falha. `frame` (opcional) limita a busca aos frames
+  cuja URL contém esse texto. "Visível" é ter tamanho e não estar `display:none`/`visibility:hidden`.
+  A opacidade não conta, porque caixas estilizadas deixam o `<input>` transparente por cima do desenho.
+- `quando` (opcional): `"carregada"` (padrão) roda depois que a página carregou. `"desafio"` roda
+  **enquanto** a aba estiver no "Um momento…" / "Just a moment...", uma vez por aparição. **É assim
+  que o desafio da Cloudflare é resolvido: quem pede manda o clique na caixa do Turnstile** (decisão
+  do dono, 2026-09-23). O exemplo acima funciona: a caixa é
+  `<input type="checkbox" aria-label="Confirme que é humano">`, num shadow root fechado dentro do
+  iframe de `challenges.cloudflare.com`. Depois de passar, o cookie `cf_clearance` fica no perfil e
+  os pedidos seguintes nem veem o desafio.
+- `inspecionar` (opcional, para depuração): um seletor. A resposta ganha `inspecao` com a medição
+  crua de todos os frames no fim do pedido (URLs dos frames, iframes, os primeiros `input`/`button`
+  de cada frame e o alvo). Serve para descobrir seletores.
+- `esperarRede.padrao` é uma regex. Ela filtra o que volta em `rede` e o pedido espera a primeira
+  request que casar. Requests do service worker do site (aba `-1`) também contam.
+- `timeoutMs` geral: padrão 60000, máximo 240000.
+
+Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401 para token errado,
+429 para fila cheia):
+
+```json
+{
+  "ok": true,
+  "status": "concluido | timeout | desafio | erro",
+  "statusHttp": 200,
+  "urlFinal": "...", "titulo": "...", "html": "<!DOCTYPE html>...",
+  "rede": [{ "url": "...", "metodo": "GET", "status": 200, "tipo": "xmlhttprequest", "horario": 0, "aba": 12 }],
+  "acoes": [{ "tipo": "clicar", "quando": "carregada", "seletor": "#play",
+              "resultado": "clicou | nao_existia | nao_precisou | esperou", "ms": 812 }],
+  "desafio": false,
+  "erros": [],
+  "duracaoMs": 5230,
+  "etapas": { "navegar": 3100, "desafio": 0, "carregar": 1900, "acoes": 200, "rede": 30 }
+}
+```
+
+- `ok` só é `true` se `status` for `concluido` **e** `statusHttp` (status HTTP do documento principal)
+  não for erro (≥ 400). Exemplo: um `522` da Cloudflare (servidor do site fora) carrega, mas vem com
+  `ok: false`.
+- `etapas.navegar` inclui a espera pela resposta do servidor. Um site lento aparece aqui.
+- `nao_precisou`: ação de desafio cujo desafio sumiu antes de o elemento aparecer.
+
+`GET /saude` (sem token): Chrome vivo, extensão conectada e versão, memória do Chrome, fila e tela em uso.
+`GET /v1/diagnostico` (com token): permissões efetivas da extensão e contadores de eventos.
+
+**Endereço público:** `https://bot.iptv01.asia` (túnel próprio `bot-supremo`, ID
+`a572a95f-5df3-4234-9373-9b4c71ff3eef`, criado com o `cert.pem` de `iptv01.asia` que fica no PC do
+dono em `~/.cloudflared/credencial_iptv01.asia/`). O conector é o serviço `tunel` do `compose.yml`, na
+rede `flare-net`, apontando para `http://warp:8080`. A credencial do túnel fica só no notebook, em
+`dados/tunel/credenciais.json`.
+
 ## Peças
 
-1. **Chrome real** numa tela virtual (Xvfb), com perfil persistente e uBlock Origin Lite. O notebook
-   não tem tela nem desktop instalado, então tudo roda sem interface física.
-2. **Extensão própria**:
-   - abre a URL pedida (`chrome.tabs`);
+1. **Chrome real** (Google Chrome estável, `.deb` oficial, com sandbox) com perfil persistente e
+   uBlock Origin Lite. A tela é o **Xorg na GPU Intel real** do notebook (tela interna `LVDS-1`,
+   1366x768, backlight apagado), para o WebGL mostrar a placa de verdade e não o "SwiftShader" de uma
+   tela simulada. Se o Xorg não subir, o container cai sozinho para o **Xvfb** (`TELA=xvfb` força).
+   O Openbox é o gerenciador de janelas. Poucas flags: `--user-data-dir`, `--no-first-run`,
+   `--no-default-browser-check`, `--start-maximized` e `--password-store=basic`.
+   - **Extensões por política** (`/etc/opt/chrome/policies/managed/bot-supremo.json`), porque o
+     Chrome oficial não aceita mais `--load-extension`. O uBO Lite vem da Chrome Web Store. A nossa é
+     empacotada como CRX3 na subida do container (`servico/empacotar.py`), com uma chave que fica no
+     volume `dados/estado` (fora do git), e servida por um `update.xml` em `127.0.0.1:8081`. Quando o
+     código da extensão muda, a versão sobe e a extensão se atualiza sozinha.
+2. **Extensão própria** (`extensao/`, MV3):
    - observa a rede com `chrome.webRequest` (roda no navegador, fora da página, e a página não tem
      como perceber);
-   - quando uma ação pede, localiza o elemento e calcula a posição dele **na tela**, incluindo os
-     deslocamentos de iframe e da janela;
-   - lê o HTML renderizado.
+   - informa a navegação (`webNavigation`) e o título da aba;
+   - lê o HTML renderizado com `chrome.scripting` no **mundo isolado**;
+   - quando uma ação pede, mede o elemento em todos os frames. As contas de posição **na tela**
+     (iframes + janela) ficam no serviço (`_ponto_na_tela` em `servico/pedido.py`);
+   - conversa com o serviço por WebSocket em `ws://127.0.0.1:8081/ponte`.
 
-   Ela **não clica e não altera a página**.
-3. **Serviço em Python**:
-   - expõe a API HTTP;
-   - mantém uma **fila** (um pedido por vez, uma aba por vez);
+   Ela **não clica, não navega nos pedidos e não altera a página**. Não tem
+   `web_accessible_resources`, então nenhuma página consegue sondar que ela existe.
+3. **Serviço em Python** (`servico/`, aiohttp):
+   - expõe a API HTTP na porta 8080;
+   - mantém uma **fila** (um pedido por vez, uma aba por vez, até 5 esperando);
    - conversa com a extensão;
-   - dá os **cliques** com xdotool nas posições que a extensão informa;
+   - **abre a URL digitando na barra de endereço** (`ctrl+L`, digita, `Delete`, Enter) com xdotool,
+     como uma pessoa. Assim a navegação chega ao site como digitada; um `chrome.tabs.update` não
+     chegaria. Se a digitação falhar, usa `chrome.tabs` como reserva e avisa em `erros`;
+   - dá os **cliques** com xdotool nas posições calculadas, com o mouse andando numa curva;
+   - considera a página carregada quando o frame principal termina **e** a rede fica quieta por 1 s
+     (no máximo 8 s de espera extra);
    - aplica os timeouts;
-   - ao terminar cada pedido, deixa a aba em `about:blank`, para não ficar com o site aberto
-     consumindo memória;
+   - ao terminar cada pedido, fecha abas extras e deixa a aba em `about:blank`. Se o Chrome passar de
+     1100 MB, reabre o Chrome entre dois pedidos;
+   - sobe e vigia o Openbox e o Chrome (reabre se caírem);
    - tem uma rota de saúde.
 4. **Vigia do desafio da Cloudflare**: detecta quando a aba está em "Um momento…" / "Just a
    moment..." (pelo título da janela), registra isso em log e chama uma **função-gancho vazia**.
    **O conteúdo dessa função é decisão e responsabilidade do dono. Não implemente essa ação.** O
    serviço deve tratar o desafio como um estado conhecido: esperar ele sumir até o timeout e, se não
-   sumir, falhar o pedido com um erro claro.
+   sumir, falhar o pedido com um erro claro. O gancho é `ao_detectar_desafio` em
+   `servico/gancho_desafio.py` e roda numa thread à parte. Se o desafio não sumir, a resposta vem
+   com `status: "desafio"`. O dono decidiu que o desafio é resolvido **pelo próprio pedido**, com
+   ações `"quando": "desafio"` (ver o contrato). O gancho continua vazio.
 
 ## Infraestrutura
 
@@ -110,11 +207,23 @@ com headers próprios. O `<video>` só mostra um `blob:`, sem a URL real.
 - Existe um cron de reboot a cada 12h (`sudo crontab -l`). Avalie se ainda faz sentido.
 
 ### Docker
-- Tudo deste projeto roda num container: Xvfb, Chrome, extensão, serviço Python e vigia.
-- O **perfil do Chrome fica num volume do host**. Apagar ou recriar o container não pode perder
-  cookies nem sessão.
+- Tudo deste projeto roda num container (`bot-supremo`): tela, Chrome, extensão, serviço Python e vigia.
+- O repositório fica clonado em `~/bot-supremo` no notebook, com o `.env` (token da API e senha do
+  VNC) só lá.
+- O **perfil do Chrome fica num volume do host** (`~/bot-supremo/dados/perfil`). Apagar ou recriar
+  o container não pode perder cookies nem sessão.
 - A saída para a internet é pela rede do container `warp` que já existe. O IP direto da casa não é
   aceito pelo site (bloqueio do provedor, não ban).
+- **Sandbox do Chrome:** o seccomp padrão do Docker bloqueia a criação de namespaces de usuário,
+  e o Chrome morre com "Failed to move to new namespace". O `docker/seccomp-chrome.json` é o padrão
+  do Docker (moby/profiles) com `clone`, `unshare` e `setns` liberados. Nunca use `--no-sandbox`.
+- **Decidido:** `network_mode: container:warp`. O container `warp` roda o WARP completo (não é só
+  um SOCKS), então tudo sai por ele (DNS, WebRTC, QUIC), sem flag de proxy no Chrome. A API fica em
+  `warp:8080` para quem está na rede `flare-net` (e no IP do warp, visto do host). Efeito colateral:
+  o `~/start.sh` recria o `warp` a cada boot e o nosso container perde a rede. O `atualizar.sh` percebe
+  isso e recria o nosso container.
+- VNC para depuração, ou para logar no Google no Chrome do bot: porta 5900 no IP do warp, com a senha
+  do `.env`. De fora do notebook, use `ssh -L 5900:<ip-do-warp>:5900 servidor-caseiro`.
 - Se o IP do WARP for banido: refazer o registro do WARP gera um IP novo (os scripts antigos ficam
   em `~/content-warp/` no notebook). Faça backup de `~/content-warp/data/` antes.
 - O Chrome no Docker precisa de `/dev/shm` grande (`shm_size`).
@@ -125,6 +234,16 @@ com headers próprios. O `<video>` só mostra um `blob:`, sem a URL real.
   **não compila nada**: ele é lento demais para isso.
 - No notebook, algo como Watchtower ou um timer do systemd com `docker compose pull && up -d`
   percebe a imagem nova e atualiza o container sozinho.
+- **Decidido:** `.github/workflows/imagem.yml` publica `ghcr.io/rafaelsg-01/bot-supremo:latest` a
+  cada push na `main` e toda segunda-feira, para o Chrome da imagem nunca ficar velho. No notebook, o
+  timer `bot-supremo-atualizar.timer` roda o `implantacao/atualizar.sh` a cada 2 min: faz `git pull`
+  e `docker compose pull`, e recria o container se a imagem mudou, se o `warp` foi recriado ou se o
+  container não está rodando. Instalação: `sudo bash implantacao/instalar.sh`.
+- **Modo dev** (iterar sem esperar o CI): `touch .modo-dev` no notebook. O `atualizar.sh` passa a
+  usar o `compose.dev.yml`, que monta `servico/`, `extensao/` e `docker/` da pasta por cima da imagem,
+  e para de fazer pull. Copie os arquivos com `scp` e rode
+  `docker compose -f compose.yml -f compose.dev.yml up -d --force-recreate`. Apague o `.modo-dev` ao
+  terminar.
 
 ### Repositório público: cuidado com segredos
 - **Nunca** commitar tokens, senhas, IPs da casa, chaves do WARP, perfil do Chrome nem capturas de

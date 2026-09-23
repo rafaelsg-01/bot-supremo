@@ -62,7 +62,14 @@ async function tratar(msg) {
   }
 }
 
+const CONTADORES = { req: 0, reqFim: 0, nav: 0 };
+
 const COMANDOS = {
+  // Diagnóstico: permissões efetivas e quantos eventos a extensão já viu.
+  async diagnostico() {
+    return { permissoes: await chrome.permissions.getAll(), contadores: CONTADORES, versao: chrome.runtime.getManifest().version };
+  },
+
   // Deixa uma aba só (fecha pop-ups e abas extras) e devolve qual é.
   async prepararAba() {
     const abas = await chrome.tabs.query({});
@@ -118,7 +125,7 @@ const COMANDOS = {
       janela: { x: janela.left, y: janela.top, w: janela.width, h: janela.height, estado: janela.state },
       zoom: await chrome.tabs.getZoom(aba),
       frames: (frames || []).map((f) => ({ id: f.frameId, pai: f.parentFrameId, url: f.url })),
-      medidas: resultados.map((r) => ({ frame: r.frameId, ...(r.result || {}) })),
+      medidas: resultados.map((r) => ({ frame: r.frameId, ...(r.result || {}), ...(r.error ? { erroInjecao: String(r.error) } : {}) })),
     };
   },
 };
@@ -132,37 +139,80 @@ function lerDocumento() {
 }
 
 function medirNoFrame(seletor) {
-  const res = { url: location.href, vw: innerWidth, vh: innerHeight, iframes: [], alvo: null };
-  for (const f of document.querySelectorAll("iframe, frame")) {
-    const r = f.getBoundingClientRect();
-    const s = getComputedStyle(f);
-    res.iframes.push({
-      src: f.src || "",
-      x: r.left + f.clientLeft + parseFloat(s.paddingLeft || "0"),
-      y: r.top + f.clientTop + parseFloat(s.paddingTop || "0"),
-    });
-  }
-  let el = null;
   try {
-    el = document.querySelector(seletor);
+    return medirNoFrameDentro(seletor);
   } catch (e) {
-    res.erroSeletor = String(e.message);
+    return { url: location.href, erroInterno: String((e && e.stack) || e).slice(0, 400) };
+  }
+
+  function medirNoFrameDentro(seletor) {
+    // Todas as raízes do documento, entrando em shadow DOM aberto e fechado (o widget do
+    // Turnstile fica num shadow root fechado). chrome.dom só LÊ a raiz; não mexe em nada.
+    const raizes = [document];
+    const temDom = !!(chrome.dom && chrome.dom.openOrClosedShadowRoot);
+    // Só HTMLElement pode ter shadow root (a API recusa SVG e afins).
+    const abrir = (el) => {
+      if (!(el instanceof HTMLElement)) return null;
+      try {
+        return temDom ? chrome.dom.openOrClosedShadowRoot(el) : el.shadowRoot;
+      } catch {
+        return null;
+      }
+    };
+    for (let i = 0; i < raizes.length; i++) {
+      for (const el of raizes[i].querySelectorAll("*")) {
+        const sombra = abrir(el);
+        if (sombra) raizes.push(sombra);
+      }
+    }
+    const buscarTodos = (sel) => raizes.flatMap((r) => Array.from(r.querySelectorAll(sel)));
+
+    const res = {
+      url: location.href,
+      vw: innerWidth,
+      vh: innerHeight,
+      iframes: [],
+      alvo: null,
+      // Para depuração (campo "inspecionar" do pedido).
+      raizes: raizes.length,
+      temChromeDom: !!(chrome.dom && chrome.dom.openOrClosedShadowRoot),
+      campos: buscarTodos("input, button, [role=button], [role=checkbox]")
+        .slice(0, 15)
+        .map((e) => e.outerHTML.slice(0, 160)),
+    };
+    for (const f of buscarTodos("iframe, frame")) {
+      const r = f.getBoundingClientRect();
+      const s = getComputedStyle(f);
+      res.iframes.push({
+        src: f.src || "",
+        x: r.left + f.clientLeft + parseFloat(s.paddingLeft || "0"),
+        y: r.top + f.clientTop + parseFloat(s.paddingTop || "0"),
+      });
+    }
+    let el = null;
+    try {
+      el = buscarTodos(seletor)[0] || null;
+    } catch (e) {
+      res.erroSeletor = String(e.message);
+      return res;
+    }
+    if (!el) return res;
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    // Opacidade não entra: caixas estilizadas (como a do Turnstile) deixam o <input> real
+    // transparente por cima do desenho, e clicar ali é exatamente o que uma pessoa faz.
+    const visivel = r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    let coberto = false;
+    if (visivel && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
+      const raiz = el.getRootNode();
+      const topo = (raiz.elementFromPoint ? raiz : document).elementFromPoint(cx, cy);
+      coberto = !!topo && topo !== el && !el.contains(topo);
+    }
+    res.alvo = { x: r.left, y: r.top, w: r.width, h: r.height, visivel, coberto };
     return res;
   }
-  if (!el) return res;
-  const r = el.getBoundingClientRect();
-  const s = getComputedStyle(el);
-  const visivel =
-    r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0;
-  const cx = r.left + r.width / 2;
-  const cy = r.top + r.height / 2;
-  let coberto = false;
-  if (visivel && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight) {
-    const topo = document.elementFromPoint(cx, cy);
-    coberto = !!topo && topo !== el && !el.contains(topo);
-  }
-  res.alvo = { x: r.left, y: r.top, w: r.width, h: r.height, visivel, coberto };
-  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,10 +227,11 @@ function propria(d) {
 }
 
 chrome.webRequest.onBeforeRequest.addListener((d) => {
+  CONTADORES.req++;
   if (propria(d)) return;
   enviar({
     evento: "req",
-    id: d.requestId,
+    req: d.requestId,
     url: d.url,
     metodo: d.method,
     tipo: d.type,
@@ -193,15 +244,16 @@ chrome.webRequest.onBeforeRequest.addListener((d) => {
 
 chrome.webRequest.onCompleted.addListener((d) => {
   if (propria(d)) return;
-  enviar({ evento: "reqFim", id: d.requestId, aba: d.tabId, status: d.statusCode, horario: d.timeStamp, doCache: d.fromCache });
+  enviar({ evento: "reqFim", req: d.requestId, aba: d.tabId, status: d.statusCode, horario: d.timeStamp, doCache: d.fromCache });
 }, FILTRO);
 
 chrome.webRequest.onErrorOccurred.addListener((d) => {
   if (propria(d)) return;
-  enviar({ evento: "reqFim", id: d.requestId, aba: d.tabId, status: null, erro: d.error, horario: d.timeStamp });
+  enviar({ evento: "reqFim", req: d.requestId, aba: d.tabId, status: null, erro: d.error, horario: d.timeStamp });
 }, FILTRO);
 
 chrome.webNavigation.onCommitted.addListener((d) => {
+  CONTADORES.nav++;
   if (d.frameId !== 0) return;
   enviar({
     evento: "nav",

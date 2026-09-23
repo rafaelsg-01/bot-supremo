@@ -40,7 +40,11 @@ principal() {
     img_antes="$(docker compose "${arquivos[@]}" images -q bot 2>/dev/null | head -n1)"
     if [ "$modo_dev" = 0 ]; then
         sudo -u "$dono" git pull --ff-only -q || echo "aviso: git pull falhou"
-        docker compose "${arquivos[@]}" pull -q bot || echo "aviso: pull da imagem falhou"
+        docker compose "${arquivos[@]}" pull -q || echo "aviso: pull das imagens falhou"
+    fi
+    # O túnel não depende do warp: só garante que está de pé (e na imagem mais nova).
+    if [ -f dados/tunel/credenciais.json ]; then
+        docker compose "${arquivos[@]}" up -d tunel >/dev/null 2>&1 || echo "aviso: túnel não subiu"
     fi
     img_depois="$(docker image inspect -f '{{.Id}}' "$(docker compose "${arquivos[@]}" config --images | head -n1)" 2>/dev/null)"
 

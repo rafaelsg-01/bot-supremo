@@ -49,21 +49,29 @@ def validar(corpo):
     for i, acao in enumerate(corpo.get("acoes") or []):
         if not isinstance(acao, dict):
             raise ErroValidacao(f"acoes[{i}] tem que ser um objeto")
+        quando = acao.get("quando", "carregada")
+        if quando not in ("carregada", "desafio"):
+            raise ErroValidacao(f"acoes[{i}].quando tem que ser 'carregada' ou 'desafio'")
         tipo = acao.get("tipo")
         if tipo == "esperar":
             ms = acao.get("ms")
             if not isinstance(ms, int) or ms < 0:
                 raise ErroValidacao(f"acoes[{i}].ms tem que ser um inteiro >= 0")
-            acoes.append({"tipo": "esperar", "ms": ms})
+            acoes.append({"tipo": "esperar", "ms": ms, "quando": quando})
         elif tipo == "clicar":
             seletor = acao.get("seletor")
             if not isinstance(seletor, str) or not seletor.strip():
                 raise ErroValidacao(f"acoes[{i}].seletor é obrigatório")
+            frame = acao.get("frame")
+            if frame is not None and not isinstance(frame, str):
+                raise ErroValidacao(f"acoes[{i}].frame tem que ser texto (pedaço da URL do frame)")
             acoes.append({
                 "tipo": "clicar",
                 "seletor": seletor,
+                "frame": frame,
                 "seExistir": bool(acao.get("seExistir", False)),
                 "timeoutMs": int(acao.get("timeoutMs", 10000)),
+                "quando": quando,
             })
         else:
             raise ErroValidacao(f"acoes[{i}].tipo desconhecido: {tipo!r} (use 'clicar' ou 'esperar')")
@@ -79,9 +87,14 @@ def validar(corpo):
             raise ErroValidacao(f"'esperarRede.padrao' inválido: {e}") from None
         esperar_rede = {"regex": regex, "timeoutMs": int(er.get("timeoutMs", 30000))}
 
+    inspecionar = corpo.get("inspecionar")
+    if inspecionar is not None and not isinstance(inspecionar, str):
+        raise ErroValidacao("'inspecionar' tem que ser um seletor em texto")
+
     return {
         "url": url,
         "acoes": acoes,
+        "inspecionar": inspecionar,
         "esperarRede": esperar_rede,
         "html": bool(corpo.get("html", True)),
         "timeoutMs": timeout,
@@ -129,12 +142,16 @@ class Execucao:
         self.titulo = ""
         self.url_atual = ""
         self.navegando = False
+        # saiu: a request do documento principal partiu. commit: a resposta chegou.
+        self.saiu = asyncio.Event()
         self.commit = asyncio.Event()
         self.carregada = asyncio.Event()
         self.ultimo_movimento_rede = time.monotonic()
         self.pendentes = set()
         self.rede = []
         self._rede_por_id = {}
+        self._documentos = set()
+        self.status_http = None
         self.casou = asyncio.Event()
         self.desafio_visto = False
         self.etapas = {}
@@ -177,6 +194,12 @@ class Execucao:
                     html = await self.ponte.pedir("lerHtml", timeout=15, aba=self.aba)
                 except ErroExtensao as e:
                     self.erros.append(f"falha ao ler o HTML: {e}")
+            inspecao = None
+            if self.p["inspecionar"] and self.aba is not None:
+                try:
+                    inspecao = await self.ponte.pedir("localizar", aba=self.aba, seletor=self.p["inspecionar"])
+                except ErroExtensao as e:
+                    self.erros.append(f"falha ao inspecionar: {e}")
         finally:
             consumidor.cancel()
             self.ponte.parar_de_ouvir(fila)
@@ -184,9 +207,13 @@ class Execucao:
 
         duracao = self._ms(self.inicio)
         log.info("pedido %s -> %s em %d ms (%s)", self.p["url"], status, duracao, self.etapas)
+        extra = {"inspecao": inspecao} if self.p["inspecionar"] else {}
         return {
-            "ok": status == "concluido",
+            **extra,
+            # A página pode "carregar" e mesmo assim ser um erro do site (ex.: 522 da Cloudflare).
+            "ok": status == "concluido" and not (self.status_http and self.status_http >= 400),
             "status": status,
+            "statusHttp": self.status_http,
             "urlFinal": self.url_atual,
             "titulo": self.titulo,
             "html": html,
@@ -209,9 +236,10 @@ class Execucao:
         await self._esperar_carregar()
         self.etapas["carregar"] = self._ms(t)
 
-        if self.p["acoes"]:
+        acoes = [a for a in self.p["acoes"] if a["quando"] == "carregada"]
+        if acoes:
             t = time.monotonic()
-            for acao in self.p["acoes"]:
+            for acao in acoes:
                 await self._acao(acao)
             self.etapas["acoes"] = self._ms(t)
 
@@ -236,8 +264,12 @@ class Execucao:
             aba = ev.get("aba")
             if tipo == "req":
                 if aba == self.aba:
-                    self.pendentes.add(ev["id"])
+                    self.pendentes.add(ev["req"])
                     self.ultimo_movimento_rede = time.monotonic()
+                    if ev.get("tipo") == "main_frame":
+                        self._documentos.add(ev["req"])
+                        if self.navegando:
+                            self.saiu.set()
                 # O service worker do site faz requests com aba -1: também contam.
                 er = self.p["esperarRede"]
                 if er and aba in (self.aba, -1) and er["regex"].search(ev["url"]):
@@ -250,13 +282,15 @@ class Execucao:
                         "aba": aba,
                     }
                     self.rede.append(item)
-                    self._rede_por_id[ev["id"]] = item
+                    self._rede_por_id[ev["req"]] = item
                     self.casou.set()
             elif tipo == "reqFim":
-                if ev["id"] in self.pendentes:
-                    self.pendentes.discard(ev["id"])
+                if ev["req"] in self._documentos:
+                    self.status_http = ev.get("status")
+                if ev["req"] in self.pendentes:
+                    self.pendentes.discard(ev["req"])
                     self.ultimo_movimento_rede = time.monotonic()
-                item = self._rede_por_id.get(ev["id"])
+                item = self._rede_por_id.get(ev["req"])
                 if item:
                     item["status"] = ev.get("status")
                     if ev.get("erro"):
@@ -293,13 +327,15 @@ class Execucao:
         # Delete apaga o "autocompletar" que a barra poderia ter sugerido do histórico.
         await xdotool.teclas("Delete")
         await xdotool.teclas("Return")
+        # Confirma pela SAÍDA da request, não pela resposta: um servidor lento demora a
+        # responder, e abrir de novo pela extensão faria dois acessos.
         try:
-            await asyncio.wait_for(self.commit.wait(), 10)
+            await asyncio.wait_for(self.saiu.wait(), 10)
         except TimeoutError:
             log.warning("a digitação não navegou em 10s; usando chrome.tabs como reserva")
             self.erros.append("aviso: a URL não pôde ser digitada; aberta pela extensão")
             await self.ponte.pedir("irPara", aba=self.aba, url=self.p["url"])
-            await self.commit.wait()
+        await self.commit.wait()
 
     # --- carregar -----------------------------------------------------------
 
@@ -331,9 +367,16 @@ class Execucao:
             tarefa = asyncio.create_task(asyncio.to_thread(self._chamar_gancho, contexto))
             self._tarefas_gancho.add(tarefa)
             tarefa.add_done_callback(self._tarefas_gancho.discard)
+        # Ações que quem pediu mandou para esta situação (ex.: clicar na caixa do Turnstile).
+        # Rodam uma vez por aparição do desafio.
+        for acao in (a for a in self.p["acoes"] if a["quando"] == "desafio"):
+            if not _eh_desafio(self.titulo):
+                break
+            await self._acao(acao)
         while _eh_desafio(self.titulo):
             await asyncio.sleep(0.5)
         log.info("o desafio sumiu depois de %d ms", self._ms(inicio))
+        self.etapas["desafio"] = self.etapas.get("desafio", 0) + self._ms(inicio)
 
     @staticmethod
     def _chamar_gancho(contexto):
@@ -346,7 +389,7 @@ class Execucao:
 
     async def _acao(self, acao):
         inicio = time.monotonic()
-        registro = {"tipo": acao["tipo"]}
+        registro = {"tipo": acao["tipo"], "quando": acao["quando"]}
         if acao["tipo"] == "esperar":
             await asyncio.sleep(acao["ms"] / 1000)
             registro["resultado"] = "esperou"
@@ -362,11 +405,21 @@ class Execucao:
         limite = time.monotonic() + acao["timeoutMs"] / 1000
         rolagens = 0
         while True:
-            dados = await self.ponte.pedir("localizar", aba=self.aba, seletor=acao["seletor"])
+            if acao["quando"] == "desafio" and not _eh_desafio(self.titulo):
+                return "nao_precisou"
+            try:
+                dados = await self.ponte.pedir("localizar", aba=self.aba, seletor=acao["seletor"])
+            except ErroExtensao as e:
+                # Frame sumindo no meio de uma navegação, por exemplo. Tenta de novo até o limite.
+                if time.monotonic() >= limite:
+                    raise
+                log.info("falha ao medir %r (%s); tentando de novo", acao["seletor"], e)
+                await asyncio.sleep(0.5)
+                continue
             erro_seletor = next((m["erroSeletor"] for m in dados["medidas"] if m.get("erroSeletor")), None)
             if erro_seletor:
                 raise ErroPedido(f"seletor inválido {acao['seletor']!r}: {erro_seletor}")
-            alvo = _ponto_na_tela(dados)
+            alvo = _ponto_na_tela(dados, acao.get("frame"))
             if alvo and alvo["fora"] == 0:
                 if alvo["coberto"]:
                     log.info("o elemento %r parece coberto por outro; clicando mesmo assim", acao["seletor"])
@@ -399,11 +452,12 @@ class Execucao:
             await self.navegador.reiniciar_chrome()
 
 
-def _ponto_na_tela(dados):
+def _ponto_na_tela(dados, filtro_frame=None):
     """Converte a medida da extensão (px do frame) em pixel da tela, somando iframes e janela.
 
-    Devolve None se o elemento não está visível em nenhum frame. "fora" diz quantos px o
-    centro do elemento está acima (<0) ou abaixo (>0) da área visível da aba.
+    Devolve None se o elemento não está visível em nenhum frame (ou em nenhum cuja URL contenha
+    filtro_frame). "fora" diz quantos px o centro do elemento está acima (<0) ou abaixo (>0) da
+    área visível da aba.
     """
     medidas = {m["frame"]: m for m in dados["medidas"]}
     frames = {f["id"]: f for f in dados["frames"]}
@@ -443,7 +497,10 @@ def _ponto_na_tela(dados):
         return deslocamentos[fid]
 
     candidatos = sorted(
-        (m for m in medidas.values() if m.get("alvo") and m["alvo"]["visivel"]),
+        (
+            m for m in medidas.values()
+            if m.get("alvo") and m["alvo"]["visivel"] and (not filtro_frame or filtro_frame in (m.get("url") or ""))
+        ),
         key=lambda m: m["frame"],
     )
     for m in candidatos:

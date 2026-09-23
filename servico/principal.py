@@ -87,7 +87,11 @@ def criar_api(ponte, navegador, fila):
 
     app = web.Application(middlewares=[autenticacao], client_max_size=1024 * 1024)
     app.router.add_post("/v1/navegar", navegar)
+    async def diagnostico(request):
+        return web.json_response(await ponte.pedir("diagnostico"))
+
     app.router.add_get("/saude", saude)
+    app.router.add_get("/v1/diagnostico", diagnostico)
     return app
 
 

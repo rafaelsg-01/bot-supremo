@@ -83,7 +83,7 @@ class Ponte:
                 if msg.type != WSMsgType.TEXT:
                     continue
                 dados = json.loads(msg.data)
-                if "id" in dados:
+                if "id" in dados and "evento" not in dados:
                     futuro = self._pendentes.get(dados["id"])
                     if futuro and not futuro.done():
                         futuro.set_result(dados)

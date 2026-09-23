@@ -87,7 +87,11 @@ class Navegador:
                 await self._abrir_chrome()
 
     def memoria_mb(self):
-        """Memória (RSS) somada do Chrome e de todos os processos filhos."""
+        """Memória exclusiva (USS) somada do Chrome e dos processos filhos.
+
+        RSS não serve: cada processo do Chrome conta de novo as bibliotecas compartilhadas, e a
+        soma dá ~3x o uso real.
+        """
         if not self.vivo():
             return 0
         try:
@@ -98,7 +102,7 @@ class Navegador:
         total = 0
         for p in processos:
             try:
-                total += p.memory_info().rss
+                total += p.memory_full_info().uss
             except psutil.Error:
                 pass
         return round(total / 1024 / 1024)
