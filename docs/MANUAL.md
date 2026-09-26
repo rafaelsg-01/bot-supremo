@@ -190,9 +190,9 @@ ssh servidor-caseiro "docker ps; free -m; systemctl status bot-supremo-atualizar
 ssh servidor-caseiro "journalctl -u bot-supremo-atualizar --since '1 hour ago' --no-pager | tail"
 ```
 
-Ver e mexer no Chrome do bot pelo navegador (noVNC, por túnel SSH, nada público):
-`powershell -ExecutionPolicy Bypass -File implantacao\tela.ps1`. Enquanto alguém mexe pela tela, não
-mande pedidos: os dois usam a mesma aba.
+Ver e mexer no Chrome do bot: pelo painel (seção 0), de qualquer lugar. Alternativa de dentro da
+rede, sem o painel: `powershell -ExecutionPolicy Bypass -File implantacao	ela.ps1` (túnel SSH).
+Enquanto alguém mexe pela tela, pause o bot: os pedidos e a pessoa usam a mesma aba.
 
 Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 `ssh servidor-caseiro "docker exec -u pessoa -e DISPLAY=:0 bot-supremo xdotool ..."` e
