@@ -26,6 +26,8 @@ LIMITE_MEMORIA_CHROME_MB = _int("LIMITE_MEMORIA_CHROME_MB", 1100)
 # Pedidos no total (rodando + esperando). Esperar custa quase nada (só uma conexão aberta); o
 # limite existe para não acumular horas de trabalho se algo chamar em loop.
 FILA_MAXIMA = _int("FILA_MAXIMA", 30)
+# De quanto em quanto tempo a resposta de /v1/navegar manda um espaço enquanto o pedido não acaba.
+INTERVALO_MANTER_VIVA_S = _int("INTERVALO_MANTER_VIVA_S", 20)
 TIMEOUT_PADRAO_MS = _int("TIMEOUT_PADRAO_MS", 60000)
 TIMEOUT_MAXIMO_MS = _int("TIMEOUT_MAXIMO_MS", 240000)
 

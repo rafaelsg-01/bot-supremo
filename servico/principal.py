@@ -79,8 +79,24 @@ def criar_api(ponte, navegador, fila):
             tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador).rodar()))
             fila.em_andamento[chave] = tarefa
             tarefa.add_done_callback(lambda _t: fila.em_andamento.pop(chave, None))
-        resposta = await asyncio.shield(tarefa)
-        return web.json_response(resposta)
+        # A Cloudflare corta (524) a resposta que não começa em ~120 s, e um pedido que espera na
+        # fila passa disso fácil. Por isso o cabeçalho sai já, e um espaço a cada 20 s mantém a
+        # conexão viva até o JSON ficar pronto (espaço antes do JSON é válido para qualquer parser).
+        resposta = web.StreamResponse(headers={"Content-Type": "application/json; charset=utf-8"})
+        try:
+            await resposta.prepare(request)
+            while True:
+                try:
+                    resultado = await asyncio.wait_for(asyncio.shield(tarefa), config.INTERVALO_MANTER_VIVA_S)
+                    break
+                except TimeoutError:
+                    await resposta.write(b" ")
+            await resposta.write(json.dumps(resultado).encode())
+            await resposta.write_eof()
+        except ConnectionResetError:
+            # Quem pediu desistiu. O pedido segue na fila (shield) e um pedido igual pega o resultado.
+            log.info("quem pediu desconectou antes do fim: %s", pedido["url"])
+        return resposta
 
     async def saude(request):
         esperada = ponte.versao_esperada()
