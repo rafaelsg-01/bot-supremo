@@ -115,11 +115,9 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
 - `esperarRede.padrao` é uma regex. Ela filtra o que volta em `rede` e o pedido espera a primeira
   request que casar. Requests do service worker do site (aba `-1`) também contam.
 - `timeoutMs` geral: padrão 60000, máximo 240000.
-- `reaproveitarMs` (opcional, padrão 0): se um pedido **idêntico** (mesmo corpo) terminou com `ok: true`
-  há menos desse tempo, a resposta é aquela mesma, na hora, com `"reaproveitado": true`, sem abrir o
-  site. Serve para quem desistiu de esperar e pediu de novo (o Worker do iptv é encerrado quando a TV
-  desiste). Máximo 3600000. Independente disso, um pedido idêntico a um que **ainda** está na fila ou
-  rodando sempre espera o resultado dele, em vez de rodar de novo.
+- Um pedido idêntico (mesmo corpo) a um que **ainda** está na fila ou rodando espera o resultado
+  dele, em vez de rodar de novo. **O bot não guarda resultados depois que o pedido termina.** Decisão
+  do dono (2026-09-26): nada de cache no notebook. Cache é do lado de quem chama (o KV do iptv).
 - **A resposta começa na hora** (cabeçalho 200) e recebe um espaço a cada 20 s até o JSON ficar
   pronto, porque a Cloudflare corta com 524 a resposta que não começa em ~120 s. Os erros 400, 401 e
   429 continuam saindo com o status certo, porque são decididos antes.

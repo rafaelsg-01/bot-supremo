@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import signal
-import time
 
 from aiohttp import web
 
@@ -29,11 +28,8 @@ class Fila:
 
     Pedidos idênticos (mesmo corpo) que chegam enquanto um igual ainda está na fila ou rodando não
     entram de novo: esperam o mesmo resultado. Assim quem repete um pedido (ex.: a TV tentando de
-    novo o mesmo episódio) não faz o site ser visitado duas vezes.
-
-    Pedidos com "reaproveitarMs" também guardam o resultado (se ok) por esse tempo, para um pedido
-    idêntico que chegar depois. Serve para quem desistiu de esperar e pede de novo: sem isso, o
-    trabalho (e o acesso ao site) se perderia.
+    novo o mesmo episódio) não faz o site ser visitado duas vezes. Nada é guardado depois que o
+    pedido termina: cache é responsabilidade de quem chama.
     """
 
     def __init__(self, maximo):
@@ -41,20 +37,6 @@ class Fila:
         self.trava = asyncio.Lock()
         self.na_fila = 0
         self.em_andamento = {}
-        self.recentes = {}  # chave -> (instante em que terminou, resposta)
-
-    def guardar(self, chave, resposta):
-        agora = time.monotonic()
-        limite = config.REAPROVEITAR_MAXIMO_MS / 1000
-        for velha in [c for c, (t, _) in self.recentes.items() if agora - t > limite]:
-            del self.recentes[velha]
-        self.recentes[chave] = (agora, resposta)
-
-    def recente(self, chave, ms):
-        guardado = self.recentes.get(chave)
-        if guardado and time.monotonic() - guardado[0] <= ms / 1000:
-            return guardado[1]
-        return None
 
     async def executar(self, fabrica):
         self.na_fila += 1
@@ -88,11 +70,6 @@ def criar_api(ponte, navegador, fila):
         except ErroValidacao as e:
             return web.json_response({"ok": False, "erro": str(e)}, status=400)
         chave = json.dumps(corpo, sort_keys=True, ensure_ascii=False)
-        if pedido["reaproveitarMs"]:
-            guardado = fila.recente(chave, pedido["reaproveitarMs"])
-            if guardado is not None:
-                log.info("pedido igual a um que terminou há pouco; reaproveitando o resultado: %s", pedido["url"])
-                return web.json_response({**guardado, "reaproveitado": True})
         tarefa = fila.em_andamento.get(chave)
         if tarefa is not None:
             log.info("pedido repetido enquanto o igual ainda roda; esperando o mesmo resultado: %s", pedido["url"])
@@ -102,13 +79,7 @@ def criar_api(ponte, navegador, fila):
             # A execução segue até o fim mesmo se quem pediu desistir, para a aba não ficar pela metade.
             tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador).rodar()))
             fila.em_andamento[chave] = tarefa
-
-            def ao_terminar(t):
-                fila.em_andamento.pop(chave, None)
-                if pedido["reaproveitarMs"] and not t.cancelled() and t.exception() is None and t.result()["ok"]:
-                    fila.guardar(chave, t.result())
-
-            tarefa.add_done_callback(ao_terminar)
+            tarefa.add_done_callback(lambda _t: fila.em_andamento.pop(chave, None))
         # A Cloudflare corta (524) a resposta que não começa em ~120 s, e um pedido que espera na
         # fila passa disso fácil. Por isso o cabeçalho sai já, e um espaço a cada 20 s mantém a
         # conexão viva até o JSON ficar pronto (espaço antes do JSON é válido para qualquer parser).

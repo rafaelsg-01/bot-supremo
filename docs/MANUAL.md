@@ -56,8 +56,8 @@ Arquivos: [servico/principal.py](../servico/principal.py) (API e fila) e
 2. **Junção de pedidos iguais.** Se um pedido com o **corpo idêntico** já está na fila ou rodando, o
    novo não entra: espera o mesmo resultado (`Fila.em_andamento`). Isso protege o limite do site
    quando a TV repete o mesmo episódio.
-   Com `reaproveitarMs`, um resultado `ok` também fica guardado por esse tempo para o próximo pedido
-   idêntico (resposta na hora, com `"reaproveitado": true`).
+   Nada é guardado depois que o pedido termina: **o dono não quer cache no notebook**. Cache é
+   só no KV do iptv.
 3. **Fila.** Um pedido por vez, na ordem de chegada. Até 30 no total (`FILA_MAXIMA`). Acima disso → 429.
 4. **Resposta que mantém a conexão viva.** O cabeçalho HTTP 200 sai **na hora**, e o serviço manda
    um espaço a cada 20 s até o JSON ficar pronto. **Motivo:** a Cloudflare corta com 524 a resposta
@@ -99,14 +99,18 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
 |---|---|---|
 | `Function_getMovieList` / `Function_getSerieList` | `url` = `/final_mapafilmes.txt` / `/final_mapa.txt` | listas cruas `movies_list_rc` / `series_list_rc`, renovadas em segundo plano depois de 12 h. Lista vazia (falha) **não** substitui a boa |
 | `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
-| `Function_getLinkMp4List` | episódio/filme + esperar 15 s + clicar `#submit` no frame `player3/server.php` + `esperarRede` com a URL do vídeo | `mp4-list-<linkPage>`, até o link vencer menos 5 min (~55 min) |
+| `Function_getLinkMp4List` | episódio/filme + esperar 15 s + clicar `#submit` no frame `player3/server.php` + `esperarRede` com a URL do vídeo | `mp4-list-<linkPage>`, **4 h fixas** (como o dono fez) |
 
 - **Sempre** use `Function_getLinkMp4ListComCache(env, linkPage, context)`, com o `context`. Ele usa
-  `waitUntil`, mas isso só dá uns 30 s extras depois que a TV desiste: a Cloudflare encerra o Worker.
-  Por isso o pedido de vídeo também manda `reaproveitarMs: 600000`, e o bot guarda o link por 10 min
-  para o próximo clique. Os dois juntos cobrem a TV que desiste de esperar.
+  `waitUntil`, que dá uns 30 s extras para gravar no KV depois que a TV desiste (depois disso a
+  Cloudflare encerra o Worker).
+- **O cache de vídeo é só este, no KV, com 4 h.** Não mexa no tempo sem falar com o dono. Em
+  2026-09-26 eu (IA) troquei por uma conta com o número `nu3zAQc9HC3GbwJq=<n>` achando que era a
+  validade do link. **É o horário de criação**: a conta dava negativa e nada era guardado, e o dono
+  percebeu na TV. Um link com 1h26 de vida ainda tocava.
+- **Nada de cache no notebook** (decisão do dono). O bot não guarda resultado de pedido.
 - O KV da Cloudflare pode continuar respondendo "não achei" por até 60 s depois de gravado (cache de
-  leitura negativa). O `reaproveitarMs` também cobre essa janela.
+  leitura negativa).
 - Os 4 lugares que pedem vídeo (`/get-list-link-mp4`, `/get-list-link-mp4-rc`, `src/tv/movie.ts`,
   `src/tv/episode.ts`) usam a mesma chave de propósito.
 - **Cuidado:** o HTML, o CSS e o JS **do cliente** `/tv` rodam num navegador de TV muito antigo, e
@@ -126,7 +130,7 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
   parser não as entende, mas só 1 das 5.635 séries da lista não usa `/browse-`.
 - **Player:** iframe `player3/server.php`, botão de play `#submit`. Ao clicar, o player chama
   `player3/serverforms.api` e depois baixa o vídeo pelo proxy do site:
-  `https://<host>.null-null.shop/…/proxy?container=videos&refresh=…&url=https://<host>/V/<servidor>/videos/<ID>.mp4?sv=…&nu3zAQc9HC3GbwJq=<validade>-<assinatura>`.
+  `https://<host>.null-null.shop/…/proxy?container=videos&refresh=…&url=https://<host>/V/<servidor>/videos/<ID>.mp4?sv=…&nu3zAQc9HC3GbwJq=<horário de criação, epoch>-<assinatura>`.
   A regex usada no iptv é `[?&]url=https?://[^?&]+[.]mp4[?]`.
 - O proxy exige os headers `h31ffadrg3bb7: h31ffadrg3fj345a` e `x-requested-with: RC-Site-Requests`
   (o `/proxy-rc` já manda). O mp4 de dentro recusa conexão direta (520).
@@ -226,11 +230,10 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | 10 vídeos novos ao mesmo tempo pelo iptv (antes da correção) | 3 OK; os outros 7 com 524 no Worker, mas o bot terminou todos |
 | 11 vídeos seguidos no site | todos capturaram o link (28–44 s cada), sem bater no limite |
 | 10 vídeos novos ao mesmo tempo pelo iptv (com a resposta em espaços) | 8 entregues, o último depois de 255 s na fila. Os 2 últimos: a Cloudflare fechou a conexão cliente→Worker em ~270 s, mas o bot terminou os dois |
-| TV desiste em 15 s e clica de novo 45 s depois (com `reaproveitarMs`) | link em 0,1 s, reaproveitado do bot (o KV ainda respondia "não achei" por causa do cache de 60 s da Cloudflare) |
+| Mesmo episódio pedido 5 min depois (cache de 4 h no KV) | 1ª vez 34,8 s; 2ª vez 0,27 s |
 
 Na prática: **um vídeo novo leva ~35 s**. Com vários vídeos novos pedidos juntos, cada um espera a sua
-vez (~35 s por vídeo à frente). Se a TV desistir antes, o próximo clique no mesmo vídeo recebe o link
-na hora (até 10 min depois pelo bot, até ~55 min pelo KV).
+vez (~35 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre na hora.
 
 ## 10. Pendências
 
