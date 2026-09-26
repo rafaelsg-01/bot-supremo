@@ -72,6 +72,8 @@ if [ -n "${VNC_SENHA:-}" ]; then
     x11vnc -storepasswd "$VNC_SENHA" /tmp/vnc.senha >/dev/null 2>&1
     x11vnc -display :0 -rfbauth /tmp/vnc.senha -rfbport 5900 -forever -shared -quiet \
         >/tmp/x11vnc.log 2>&1 &
+    # noVNC: o mesmo VNC pelo navegador, em http://<ip-do-warp>:6080/vnc.html (usar por túnel SSH).
+    websockify --web /usr/share/novnc 6080 127.0.0.1:5900 >/tmp/novnc.log 2>&1 &
 fi
 
 setpriv --reuid=pessoa --regid=pessoa --init-groups \

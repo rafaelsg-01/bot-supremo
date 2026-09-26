@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg locales tzdata tini procps \
         xserver-xorg-core xvfb x11-utils x11-xserver-utils xauth \
         libgl1-mesa-dri libegl1 libgbm1 mesa-vulkan-drivers \
-        openbox xdotool x11vnc \
+        openbox xdotool x11vnc novnc python3-websockify scrot \
         fonts-liberation fonts-noto-core fonts-noto-color-emoji fonts-dejavu-core \
         python3 python3-aiohttp python3-psutil python3-cryptography \
     && sed -i 's/^# *pt_BR.UTF-8/pt_BR.UTF-8/' /etc/locale.gen && locale-gen \

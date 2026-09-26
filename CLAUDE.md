@@ -230,6 +230,13 @@ rede `flare-net`, apontando para `http://warp:8080`. A credencial do túnel fica
     o Chrome. Se a extensão ainda assim ficar 2 min desconectada, o serviço reabre o Chrome sozinho.
 - VNC para depuração, ou para logar no Google no Chrome do bot: porta 5900 no IP do warp, com a senha
   do `.env`. De fora do notebook, use `ssh -L 5900:<ip-do-warp>:5900 servidor-caseiro`.
+  - **Pelo navegador (noVNC), sem instalar nada:** no PC do dono, rode
+    `powershell -ExecutionPolicy Bypass -File implantacao\tela.ps1`. Ele descobre o IP do warp,
+    mostra a senha do VNC, abre o túnel SSH para a porta 6080 e abre `http://localhost:6080/vnc.html`.
+    Nada fica público. Enquanto alguém mexe pela tela, não mande pedidos para a API: os dois usariam
+    a mesma aba.
+  - **Foto da tela:** `GET /v1/tela` (com token) devolve um PNG do que o Chrome está mostrando.
+  - `implantacao/ip-warp.sh` (no notebook) imprime o IP atual do warp.
 - Se o IP do WARP for banido: refazer o registro do WARP gera um IP novo (os scripts antigos ficam
   em `~/content-warp/` no notebook). Faça backup de `~/content-warp/data/` antes.
 - O Chrome no Docker precisa de `/dev/shm` grande (`shm_size`).

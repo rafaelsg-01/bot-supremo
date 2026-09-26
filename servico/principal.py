@@ -88,10 +88,22 @@ def criar_api(ponte, navegador, fila):
     async def diagnostico(request):
         return web.json_response(await ponte.pedir("diagnostico"))
 
+    async def tela(request):
+        """Foto da tela do notebook (PNG), para depuração. Só olha: não mexe em nada."""
+        proc = await asyncio.create_subprocess_exec(
+            "scrot", "-o", "/tmp/tela.png", stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
+        )
+        _, erro = await proc.communicate()
+        if proc.returncode != 0:
+            return web.json_response({"ok": False, "erro": erro.decode(errors="replace")}, status=500)
+        with open("/tmp/tela.png", "rb") as f:
+            return web.Response(body=f.read(), content_type="image/png")
+
     app = web.Application(middlewares=[autenticacao], client_max_size=1024 * 1024)
     app.router.add_post("/v1/navegar", navegar)
     app.router.add_get("/saude", saude)
     app.router.add_get("/v1/diagnostico", diagnostico)
+    app.router.add_get("/v1/tela", tela)
     return app
 
 
