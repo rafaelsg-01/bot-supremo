@@ -73,10 +73,13 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 Hoje um episódio fora do cache leva ~30–38 s. Medições, ideias e regras em
 [MANUAL.md, seção 11](MANUAL.md#11-tempo-para-achar-o-link-do-vídeo-para-quem-for-otimizar).
 
+- [x] Pedidos repetidos: 10 simultâneos e 12 espalhados no mesmo episódio = 1 visita ao site
+- [x] Linha do tempo por pedido (log `tempo ...`, `linhaDoTempo`, `marcarRede`) e medição (MANUAL seção 11)
 - [ ] Testar sem a espera fixa de 15 s (ou com 2–3 s) em alguns episódios, espaçados
 - [ ] Ações logo após o documento chegar, sem esperar a rede quieta (mudança de contrato)
 - [ ] `ATRASO_DIGITACAO_MS` menor
-- [ ] (Perguntar ao dono) buscar o próximo episódio em segundo plano
+- [ ] ~~Buscar o próximo episódio em segundo plano~~: o dono descartou (2026-09-26)
+- [ ] Investigar o `focou` lento (0,5–4 s em 4 de 7 vídeos)
 - [ ] Registrar os tempos novos em "Descobertas" e atualizar a seção 11 do MANUAL
 
 ---
@@ -118,3 +121,5 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-26 | TV que desiste | Quando o cliente fecha a conexão, a Cloudflare encerra o Worker (o `waitUntil` ganha só ~30 s) e o link achado pelo bot não chegava ao KV. Solução: `reaproveitarMs` no contrato (resultado ok guardado no bot para o próximo pedido idêntico). Testado: desistiu em 15 s, clique 45 s depois → link em 0,1 s. A Cloudflare também fechou uma conexão cliente→Worker sem resposta em ~270 s. |
 | 2026-09-26 | Erro meu no cache | `nu3zAQc9HC3GbwJq=<n>` é o **horário de criação** do link, não a validade (link de 1h26 ainda tocava). A conta de TTL que fiz com ele dava negativa e o iptv não guardava nada; o dono viu o mesmo episódio levar 30 s de novo. Voltou para 4 h fixas. O `reaproveitarMs` do bot foi removido: o dono não quer cache no notebook. |
 | 2026-09-26 | Painel | `painel.iptv01.asia` no ar (login do dono, sessão de 10 anos). Testado pela internet: login, semáforo, dados, pausa (pedido esperou e terminou ao voltar), testar o site, reabrir o Chrome, reiniciar o bot, tela (websocket passando pela Cloudflare) e **reiniciar o notebook**: clique 19:29, notebook de volta 19:32, bot e painel no ar 19:37, sem ninguém mexer. |
+| 2026-09-26 | Repetidos | 10 cliques simultâneos no mesmo episódio pelo iptv: 1 visita ao site, os 10 com o mesmo link (46 s). 12 cliques, um a cada 8 s por 88 s: 1 visita. Os que chegaram até 2 s depois do fim já acharam no KV (o "não achei" em cache do KV não atrapalhou). |
+| 2026-09-26 | Tempo do vídeo | Linha do tempo em 7 vídeos: o player (`player3/server.php`) fica pronto em 7,6–15 s, mas o clique só sai em 28–36 s (página quieta + 15 s fixos). Clique → link: 2,1–6,1 s. `windowactivate` às vezes leva 0,5–4 s. Worker + túnel ~0,75 s. Detalhes na seção 11 do MANUAL. |

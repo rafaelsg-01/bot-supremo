@@ -278,6 +278,42 @@ no KV do iptv e sai em ~0,1 s. O dono quer diminuir esses ~35 s.
 
 Exemplos reais: 29,6 s = navegar 4,2 + carregar 7,5 + acoes 16,2 + rede 1,4; 38,5 s = 2,1 + 14,8 + 18,6 + 2,3.
 
+### Linha do tempo fina (medida em 2026-09-26, 7 vídeos, 4 séries, 1 lista)
+
+Cada pedido agora loga uma linha `tempo <url> carga=<loadavg> marco=ms[detalhe] ...` (a resposta traz o
+mesmo em `linhaDoTempo`), com ms contados **da chegada do pedido**. Para ver os marcos das requests do
+player num pedido direto ao bot, mande `"marcarRede": "serverforms|player3/|[?&]url=https?://[^?&]+[.]mp4"`.
+
+Vídeo, em ms desde a chegada (mín.–máx. de 7 episódios da 3ª temporada de Avatar):
+
+| Marco | Quando | O que se aprende |
+|---|---|---|
+| `focou` (janela do Chrome ativada) | 66–4.052 | em 4 de 7 pedidos o `windowactivate --sync` levou **0,5–4 s**. Nos outros, 70 ms |
+| `digitou` | +1,2–1,3 s | 53 letras × 25 ms |
+| `enter` → `commit` | 0,4–1,8 s | resposta do servidor do site |
+| iframe `player3/server.php` completo | 7,6–15,0 s | **a partir daqui o `#submit` já pode ser clicado** |
+| `completo` (página) | 10,8–18,5 s | anúncios, Disqus, chat |
+| `quieta` | +0,2–3,7 s depois | |
+| `esperou` (15 s fixos) | 28,1–35,5 s | **15 s parados com o player pronto** |
+| `achou` → `clicou` | ~0,1 s + 0,6–1,0 s | o `#submit` aparece na 1ª medição; o resto é o mouse andando |
+| `serverforms.api` | 0,4 s após o clique | chamado 2 vezes, ~0,8 s no total, sempre 200 |
+| link do vídeo (`casou`) | 2,1–6,1 s após o clique | depois do `serverforms` o player ainda carrega scripts por ~2–3 s |
+| `limpo` (resposta sai) | +0,2 s | |
+| Worker + túnel (iptv) | ~0,75 s | `curl` no iptv − `duracaoMs` do bot |
+
+Total: 31,3–41,2 s no bot. **Do clique possível (player pronto) até o clique real vão de 13 a 21 s**,
+e o `focou` lento soma até 4 s. Sem esses dois, o mesmo vídeo sairia em ~12–20 s.
+
+Páginas (`html`): série 4,2–6,1 s (digitar 62–74 letras ~1,5 s; `commit` 1,9–3,8 s; `completo` +0,5–1,7 s;
+`quieta` +1,4–1,8 s; ler o HTML 30 ms), lista `.txt` 3,2 s.
+
+Pedidos repetidos (testado em 2026-09-26): 10 cliques simultâneos no mesmo episódio = 1 visita ao site;
+12 cliques, um a cada 8 s por 88 s = 1 visita (os que chegaram durante o pedido pegaram o mesmo
+resultado, e os de depois, a partir de 2 s após o fim, já acharam no KV).
+
+Carga do notebook: `loadavg` 2,5–5 durante os vídeos (2 núcleos), com a CPU quase livre fora deles
+e ~15 % de espera de disco (HD mecânico).
+
 O pedido é montado em `Function_getLinkMp4List` (`../projeto-iptv/src/function_rc.ts`):
 `esperar 15000` → `clicar #submit (frame player3/server.php, timeout 20 s)` → `esperarRede` com
 `[?&]url=https?://[^?&]+[.]mp4[?]` (timeout 45 s).
