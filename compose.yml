@@ -35,7 +35,31 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Túnel próprio da Cloudflare: bot.iptv01.asia -> http://warp:8080 (a API do serviço acima).
+  # Painel de monitoramento (painel.iptv01.asia), com login. Mesma imagem do bot, outro comando.
+  # Fica fora da rede do warp de propósito: se o bot ou o warp caírem, o painel continua de pé.
+  # O socket do Docker é para ver os containers, ler o log e reiniciar (só ações fixas).
+  painel:
+    image: ghcr.io/rafaelsg-01/bot-supremo:latest
+    container_name: bot-supremo-painel
+    restart: unless-stopped
+    networks: [flare-net]
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+    working_dir: /opt/bot-supremo
+    entrypoint: ["python3", "-m", "painel.app"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /sys/class/thermal:/sys/class/thermal:ro
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Túnel próprio da Cloudflare, com os endereços em implantacao/tunel.yml:
+  # bot.iptv01.asia -> http://warp:8080 (a API) e painel.iptv01.asia -> http://bot-supremo-painel:8090.
   # A credencial fica em dados/tunel/credenciais.json e o ID do túnel no .env (TUNEL_ID).
   tunel:
     image: cloudflare/cloudflared:latest
@@ -44,13 +68,14 @@ services:
     networks: [flare-net]
     volumes:
       - ./dados/tunel/credenciais.json:/etc/cloudflared/credenciais.json:ro
+      - ./implantacao/tunel.yml:/etc/cloudflared/tunel.yml:ro
     command:
       - tunnel
       - --no-autoupdate
+      - --config
+      - /etc/cloudflared/tunel.yml
       - --credentials-file
       - /etc/cloudflared/credenciais.json
-      - --url
-      - http://warp:8080
       - run
       - ${TUNEL_ID}
     mem_limit: 128m

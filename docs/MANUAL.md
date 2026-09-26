@@ -14,6 +14,22 @@ pelo bot-supremo. O FlareSolverr antigo (`content-proxy-web-01`) ainda está lig
 
 ---
 
+## 0. Painel: o jeito principal de ver e consertar
+
+**https://painel.iptv01.asia**. O dono entra com usuário e senha (os valores ficam no `.env` do
+notebook e no `LINKS.txt` do PC dele). Uma página só, que se atualiza a cada 5 s:
+- **semáforo**: "Tudo funcionando" ou a lista do que está errado, em frases simples;
+- **notebook, bot e containers**;
+- **últimos pedidos**, com os números do dia;
+- **log**;
+- **a tela do Chrome ao vivo, com mouse e teclado**, de qualquer lugar.
+
+Botões, na ordem de tentar: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar o
+notebook. "Pausar o bot" segura os pedidos (até 30 min) para mexer na tela sem conflito.
+
+Para a IA, os comandos das seções abaixo continuam valendo. O painel é para o dono. Se precisar de algo
+que o painel não mostra, acrescente no painel (`painel/app.py` e `painel/pagina.html`).
+
 ## 1. O caminho inteiro, de um clique na TV até o vídeo
 
 ```

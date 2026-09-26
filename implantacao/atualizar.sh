@@ -43,7 +43,9 @@ principal() {
         sudo -u "$dono" git pull --ff-only -q || echo "aviso: git pull falhou"
         docker compose "${arquivos[@]}" pull -q || echo "aviso: pull das imagens falhou"
     fi
-    # O túnel não depende do warp: só garante que está de pé (e na imagem mais nova).
+    # O túnel e o painel não dependem do warp: só garante que estão de pé (e na imagem mais nova;
+    # o up -d recria quando a imagem ou a configuração mudou).
+    docker compose "${arquivos[@]}" up -d painel >/dev/null 2>&1 || echo "aviso: painel não subiu"
     if [ -f dados/tunel/credenciais.json ]; then
         docker compose "${arquivos[@]}" up -d tunel >/dev/null 2>&1 || echo "aviso: túnel não subiu"
     fi

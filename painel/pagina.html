@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do bot</title>
+<style>
+  :root {
+    --fundo: #f3f4f6; --cartao: #fff; --texto: #111827; --suave: #6b7280; --borda: #e5e7eb;
+    --verde: #15803d; --verde-fundo: #dcfce7; --vermelho: #b91c1c; --vermelho-fundo: #fee2e2;
+    --amarelo: #a16207; --amarelo-fundo: #fef9c3; --azul: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #0f172a; --cartao: #1e293b; --texto: #f1f5f9; --suave: #94a3b8; --borda: #334155;
+      --verde: #4ade80; --verde-fundo: #14532d; --vermelho: #f87171; --vermelho-fundo: #450a0a;
+      --amarelo: #facc15; --amarelo-fundo: #422006; --azul: #3b82f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--texto); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .suave { color: var(--suave); font-size: 13px; }
+  .semaforo { border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; font-weight: 600; }
+  .semaforo.bom { background: var(--verde-fundo); color: var(--verde); }
+  .semaforo.ruim { background: var(--vermelho-fundo); color: var(--vermelho); }
+  .semaforo.aviso { background: var(--amarelo-fundo); color: var(--amarelo); }
+  .semaforo ul { margin: 6px 0 0; padding-left: 20px; font-weight: 500; }
+  .grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .cartao { background: var(--cartao); border: 1px solid var(--borda); border-radius: 12px; padding: 16px; min-width: 0; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; }
+  dt { color: var(--suave); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .barra { height: 6px; border-radius: 3px; background: var(--borda); overflow: hidden; margin-top: 3px; }
+  .barra > div { height: 100%; background: var(--azul); }
+  .ok { color: var(--verde); font-weight: 600; }
+  .ruim { color: var(--vermelho); font-weight: 600; }
+  .aviso { color: var(--amarelo); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--borda); vertical-align: top; }
+  th { color: var(--suave); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.url { overflow-wrap: anywhere; }
+  .rolagem { overflow-x: auto; }
+  .botoes { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { border: 1px solid var(--borda); background: var(--cartao); color: var(--texto); border-radius: 8px; padding: 9px 14px; font-size: 14px; cursor: pointer; }
+  button:hover { border-color: var(--azul); }
+  button.primario { background: var(--azul); color: #fff; border-color: var(--azul); }
+  button.perigo { color: var(--vermelho); }
+  button:disabled { opacity: .5; cursor: wait; }
+  #mensagem { margin-top: 10px; min-height: 1.2em; font-size: 14px; }
+  .numeros { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
+  .numeros b { font-size: 20px; display: block; }
+  #tela-caixa { display: none; margin-top: 12px; }
+  #tela-caixa iframe { width: 100%; aspect-ratio: 1366 / 768; border: 1px solid var(--borda); border-radius: 8px; background: #000; }
+  pre { background: #0b1020; color: #d1d5db; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .secao { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Painel do bot</h1>
+      <div class="suave" id="atualizado">carregando…</div>
+    </div>
+    <form method="post" action="/sair"><button type="submit">Sair</button></form>
+  </header>
+
+  <div class="semaforo aviso" id="semaforo">Carregando…</div>
+
+  <div class="grade">
+    <section class="cartao">
+      <h2>Notebook</h2>
+      <dl id="notebook"></dl>
+    </section>
+    <section class="cartao">
+      <h2>Bot</h2>
+      <dl id="bot"></dl>
+    </section>
+    <section class="cartao">
+      <h2>Consertar</h2>
+      <div class="botoes">
+        <button id="btn-pausa" data-acao="pausar" data-confirma="Pausar o bot por até 30 min? Os pedidos da TV vão esperar na fila.">Pausar o bot</button>
+        <button data-acao="testar-site" data-confirma="">Testar o site agora</button>
+        <button data-acao="reabrir-chrome" data-confirma="Fechar e abrir o Chrome de novo? Leva uns 15 s.">Reabrir o Chrome</button>
+        <button data-acao="reiniciar-bot" data-confirma="Reiniciar o bot inteiro (container)? Leva uns 30 s.">Reiniciar o bot</button>
+        <button class="perigo" data-acao="reiniciar-notebook" data-confirma="Reiniciar o NOTEBOOK? Tudo fica fora do ar por 3 a 5 min." data-confirma2="Tem certeza? O notebook vai reiniciar agora.">Reiniciar o notebook</button>
+      </div>
+      <div id="mensagem" class="suave"></div>
+      <p class="suave">Ordem para tentar: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar o notebook.</p>
+    </section>
+  </div>
+
+  <section class="cartao secao">
+    <h2>Tela do Chrome</h2>
+    <div class="suave">Mouse e teclado de verdade no Chrome do bot. Pause o bot antes de mexer, para não brigar com os pedidos da TV.</div>
+    <div class="botoes" style="margin-top:10px">
+      <button class="primario" id="btn-tela">Abrir a tela</button>
+      <button id="btn-tela-nova" style="display:none">Abrir em outra aba</button>
+    </div>
+    <div id="tela-caixa"><iframe id="tela" title="Tela do Chrome do bot" allow="clipboard-read; clipboard-write"></iframe></div>
+  </section>
+
+  <section class="cartao secao">
+    <h2>Pedidos</h2>
+    <div class="numeros" id="numeros"></div>
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>Hora</th><th>Endereço</th><th>Resultado</th><th style="text-align:right">Tempo</th></tr></thead>
+        <tbody id="pedidos"></tbody>
+      </table>
+    </div>
+    <div class="suave" style="margin-top:8px">Os números contam desde a última vez que o bot foi (re)iniciado.</div>
+  </section>
+
+  <section class="cartao secao">
+    <h2>Containers no notebook</h2>
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>O quê</th><th>Estado</th><th>Há quanto tempo</th><th style="text-align:right">Memória</th></tr></thead>
+        <tbody id="containers"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="cartao secao">
+    <h2>Log do bot</h2>
+    <div class="botoes"><button id="btn-log">Ver as últimas 300 linhas</button></div>
+    <pre id="log" style="display:none"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function duracao(segundos) {
+  segundos = Math.max(0, Math.round(segundos));
+  const d = Math.floor(segundos / 86400), h = Math.floor(segundos % 86400 / 3600), m = Math.floor(segundos % 3600 / 60);
+  if (d) return `${d} d ${h} h`;
+  if (h) return `${h} h ${m} min`;
+  if (m) return `${m} min`;
+  return `${segundos} s`;
+}
+const sim = (v, textoSim = 'sim', textoNao = 'não') => v ? `<span class="ok">${textoSim}</span>` : `<span class="ruim">${textoNao}</span>`;
+function barra(usado, total, rotulo) {
+  const p = total ? Math.min(100, Math.round(usado / total * 100)) : 0;
+  return `${rotulo} (${p}%)<div class="barra"><div style="width:${p}%"></div></div>`;
+}
+function linhas(pares) { return pares.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join(''); }
+
+async function api(caminho, opcoes) {
+  const r = await fetch(caminho, opcoes);
+  if (r.status === 401) { location.reload(); throw new Error('sessão'); }
+  return r;
+}
+
+async function atualizarEstado() {
+  const e = await (await api('/api/estado')).json();
+  const n = e.notebook, b = e.bot, pausa = b.pausa || {};
+
+  const sem = $('semaforo');
+  if (e.alertas.length) {
+    sem.className = 'semaforo ruim';
+    sem.innerHTML = 'Tem algo errado:<ul>' + e.alertas.map((a) => `<li>${esc(a)}</li>`).join('') + '</ul>';
+  } else if (pausa.ativa) {
+    sem.className = 'semaforo aviso';
+    sem.textContent = pausa.segurando
+      ? 'Bot pausado: os pedidos da TV estão esperando. Volta sozinho em ' + duracao(pausa.ate - e.agora) + '.'
+      : 'Pausando: esperando o pedido atual terminar…';
+  } else {
+    sem.className = 'semaforo bom';
+    sem.textContent = 'Tudo funcionando';
+  }
+
+  $('notebook').innerHTML = linhas([
+    ['Ligado há', duracao(e.agora - n.ligadoDesde)],
+    ['CPU', barra(n.cpu, 100, `${Math.round(n.cpu)}%`)],
+    ['Memória', barra(n.ramUsadaMb, n.ramTotalMb, `${n.ramUsadaMb} de ${n.ramTotalMb} MB`)],
+    ['Swap', `${n.swapUsadaMb} de ${n.swapTotalMb} MB`],
+    ['Disco', barra(n.discoUsadoGb, n.discoTotalGb, `${n.discoUsadoGb} de ${n.discoTotalGb} GB`)],
+    ['Temperatura', n.temperatura == null ? '—' : `${n.temperatura} °C`],
+    ['iptv01.asia', e.iptv && e.iptv.status ? sim(e.iptv.status < 500, `no ar (${e.iptv.ms} ms)`) : `<span class="ruim">${esc((e.iptv || {}).erro || 'sem resposta')}</span>`],
+  ]);
+
+  const v = (e.containers && e.containers.versaoBot) || {};
+  if (b.semResposta) {
+    $('bot').innerHTML = linhas([['Situação', `<span class="ruim">sem resposta</span>`], ['Detalhe', esc(b.semResposta)]]);
+  } else {
+    const ext = b.extensoes || {};
+    $('bot').innerHTML = linhas([
+      ['Chrome', sim(b.chrome, 'aberto', 'fechado') + ` · ${b.memoriaChromeMb} MB`],
+      ['Extensão do bot', sim(b.extensao.conectada, 'conectada', 'desconectada') + ` · ${esc(b.extensao.versao || '?')}`],
+      ['uBlock Origin Lite', ext['uBlock Origin Lite'] ? `<span class="ok">instalado</span> · ${esc(ext['uBlock Origin Lite'])}` : '<span class="ruim">não instalado</span>'],
+      ['Fila', b.fila.pedidos ? `${b.fila.pedidos} pedido(s)` : 'vazia'],
+      ['Pausa', pausa.ativa ? '<span class="aviso">pausado</span>' : 'não'],
+      ['Tela', b.tela === 'xorg' ? 'GPU real (xorg)' : esc(b.tela)],
+      ['Versão', esc(v.commit || '?') + (v.iniciadoEm ? ` · no ar há ${duracao(e.agora - Date.parse(v.iniciadoEm) / 1000)}` : '')],
+    ]);
+  }
+
+  const bp = $('btn-pausa');
+  if (pausa.ativa) {
+    bp.textContent = 'Voltar ao normal'; bp.dataset.acao = 'despausar'; bp.dataset.confirma = ''; bp.className = 'primario';
+  } else {
+    bp.textContent = 'Pausar o bot'; bp.dataset.acao = 'pausar'; bp.className = '';
+    bp.dataset.confirma = 'Pausar o bot por até 30 min? Os pedidos da TV vão esperar na fila.';
+  }
+
+  const c = e.containers || {};
+  $('containers').innerHTML = c.erro ? `<tr><td colspan="4" class="ruim">${esc(c.erro)}</td></tr>` : (c.lista || []).map((x) => `
+    <tr><td>${esc(x.descricao)}<div class="suave">${esc(x.nome)}</div></td>
+    <td>${x.estado === 'running' ? '<span class="ok">rodando</span>' : `<span class="ruim">${esc(x.estado)}</span>`}</td>
+    <td>${esc(x.status)}</td>
+    <td class="num">${x.memoriaMb == null ? '—' : x.memoriaMb + ' MB'}</td></tr>`).join('');
+
+  $('atualizado').textContent = 'Atualizado às ' + new Date().toLocaleTimeString('pt-BR');
+}
+
+const NOMES_STATUS = { concluido: 'ok', timeout: 'demorou demais', erro: 'erro', desafio: 'desafio da Cloudflare' };
+async function atualizarPedidos() {
+  const p = await (await api('/api/pedidos')).json();
+  if (p.erro) { $('pedidos').innerHTML = `<tr><td colspan="4" class="ruim">${esc(p.erro)}</td></tr>`; return; }
+  const h = p.hoje;
+  $('numeros').innerHTML = `
+    <div><b>${h.total}</b><span class="suave">pedidos hoje</span></div>
+    <div><b class="ok">${h.ok}</b><span class="suave">ok</span></div>
+    <div><b class="${h.falhas ? 'ruim' : ''}">${h.falhas}</b><span class="suave">falhas</span></div>
+    <div><b>${h.mediaMs == null ? '—' : (h.mediaMs / 1000).toFixed(1) + ' s'}</b><span class="suave">tempo médio</span></div>`;
+  $('pedidos').innerHTML = p.ultimos.length ? p.ultimos.map((x) => {
+    const bom = x.status === 'concluido';
+    return `<tr><td class="num">${esc(x.hora.slice(11))}<div class="suave">${esc(x.hora.slice(8, 10) + '/' + x.hora.slice(5, 7))}</div></td>
+      <td class="url">${esc(x.url.replace(/^https?:\/\//, ''))}${x.erros ? `<div class="ruim" style="font-weight:400">${esc(x.erros)}</div>` : ''}</td>
+      <td><span class="${bom ? 'ok' : 'ruim'}">${esc(NOMES_STATUS[x.status] || x.status)}</span></td>
+      <td class="num">${(x.ms / 1000).toFixed(1)} s</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="suave">Nenhum pedido desde que o bot foi iniciado.</td></tr>';
+}
+
+async function atualizar() {
+  try { await Promise.all([atualizarEstado(), atualizarPedidos()]); }
+  catch (err) { if (err.message !== 'sessão') $('atualizado').textContent = 'Sem conexão com o painel…'; }
+}
+
+document.querySelectorAll('button[data-acao]').forEach((botao) => botao.addEventListener('click', async () => {
+  if (botao.dataset.confirma && !confirm(botao.dataset.confirma)) return;
+  if (botao.dataset.confirma2 && !confirm(botao.dataset.confirma2)) return;
+  const msg = $('mensagem');
+  botao.disabled = true;
+  msg.className = 'suave';
+  msg.textContent = botao.dataset.acao === 'testar-site' ? 'Testando (pode esperar pedidos na fila)…' : 'Um momento…';
+  try {
+    const r = await (await api('/api/acao/' + botao.dataset.acao, { method: 'POST', headers: { 'X-Painel': '1' } })).json();
+    msg.className = r.ok ? 'ok' : 'ruim';
+    msg.textContent = r.mensagem;
+  } catch (err) {
+    msg.className = 'ruim';
+    msg.textContent = 'Não consegui falar com o painel (se foi o notebook reiniciando, é normal).';
+  }
+  botao.disabled = false;
+  atualizar();
+}));
+
+async function urlTela() {
+  const t = await (await api('/api/tela')).json();
+  const q = new URLSearchParams({ autoconnect: '1', resize: 'scale', reconnect: '1', path: 'tela/websockify', password: t.senha });
+  return '/tela/vnc.html?' + q.toString();
+}
+$('btn-tela').addEventListener('click', async () => {
+  const caixa = $('tela-caixa');
+  if (caixa.style.display === 'block') {
+    caixa.style.display = 'none'; $('tela').src = 'about:blank';
+    $('btn-tela').textContent = 'Abrir a tela'; $('btn-tela-nova').style.display = 'none';
+    return;
+  }
+  $('tela').src = await urlTela();
+  caixa.style.display = 'block';
+  $('btn-tela').textContent = 'Fechar a tela'; $('btn-tela-nova').style.display = '';
+});
+$('btn-tela-nova').addEventListener('click', async () => { window.open(await urlTela(), '_blank'); });
+
+$('btn-log').addEventListener('click', async () => {
+  const pre = $('log');
+  pre.textContent = 'Carregando…'; pre.style.display = 'block';
+  pre.textContent = await (await api('/api/log')).text();
+  pre.scrollTop = pre.scrollHeight;
+});
+
+atualizar();
+setInterval(() => { if (!document.hidden) atualizar(); }, 5000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) atualizar(); });
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# Endereços do túnel "bot-supremo" (o ID vai na linha de comando, pelo TUNEL_ID do .env).
+# Para um endereço novo: acrescente aqui e crie o DNS com
+#   cloudflared tunnel --origincert <cert.pem do iptv01.asia> route dns <TUNEL_ID> <endereço>
+ingress:
+  - hostname: bot.iptv01.asia
+    service: http://warp:8080
+  - hostname: painel.iptv01.asia
+    service: http://bot-supremo-painel:8090
+  - service: http_status:404

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import signal
+import time
 
 from aiohttp import web
 
@@ -37,6 +38,40 @@ class Fila:
         self.trava = asyncio.Lock()
         self.na_fila = 0
         self.em_andamento = {}
+        # Pausa (painel): uma tarefa segura a trava da fila, e os pedidos esperam até ela soltar.
+        self.pausa = None
+        self._soltar_pausa = None
+        self.pausada_ate = None  # preenchido quando a pausa já segura a trava (o pedido da vez acabou)
+
+    def pausar(self, segundos):
+        if self.pausa is not None:
+            return
+        soltar = asyncio.Event()
+
+        async def segurar():
+            async with self.trava:
+                self.pausada_ate = time.time() + segundos
+                log.warning("bot pausado por até %d min", segundos // 60)
+                try:
+                    await asyncio.wait_for(soltar.wait(), segundos)
+                except TimeoutError:
+                    log.warning("a pausa acabou sozinha")
+                finally:
+                    self.pausada_ate = None
+            log.info("bot de volta ao normal")
+
+        self._soltar_pausa = soltar
+        self.pausa = asyncio.create_task(segurar())
+        self.pausa.add_done_callback(lambda _t: setattr(self, "pausa", None))
+
+    def despausar(self):
+        if self._soltar_pausa is not None:
+            self._soltar_pausa.set()
+
+    def estado_pausa(self):
+        if self.pausa is None:
+            return {"ativa": False}
+        return {"ativa": True, "segurando": self.pausada_ate is not None, "ate": self.pausada_ate}
 
     async def executar(self, fabrica):
         self.na_fila += 1
@@ -114,6 +149,8 @@ def criar_api(ponte, navegador, fila):
                 "esperada": esperada,
             },
             "fila": {"ocupada": fila.trava.locked(), "pedidos": fila.na_fila},
+            "pausa": fila.estado_pausa(),
+            "extensoes": _extensoes_instaladas(),
             "tela": os.environ.get("TELA_ATIVA", "?"),
         }
         return web.json_response(dados, status=200 if dados["ok"] else 503)
@@ -132,12 +169,53 @@ def criar_api(ponte, navegador, fila):
         with open("/tmp/tela.png", "rb") as f:
             return web.Response(body=f.read(), content_type="image/png")
 
+    async def pausa(request):
+        """Pausa o bot (os pedidos esperam na fila) para alguém mexer na tela. Volta sozinho."""
+        corpo = await request.json()
+        if corpo.get("pausado"):
+            fila.pausar(int(corpo.get("minutos", 30)) * 60)
+        else:
+            fila.despausar()
+        await asyncio.sleep(0.2)
+        return web.json_response({"ok": True, "pausa": fila.estado_pausa()})
+
+    async def reabrir_chrome(request):
+        log.warning("reabrindo o Chrome a pedido do painel")
+        if fila.estado_pausa().get("segurando"):
+            # A pausa já segura a fila: nenhum pedido está rodando.
+            await navegador.reiniciar_chrome()
+        else:
+            async with fila.trava:
+                await navegador.reiniciar_chrome()
+        return web.json_response({"ok": True})
+
     app = web.Application(middlewares=[autenticacao], client_max_size=1024 * 1024)
     app.router.add_post("/v1/navegar", navegar)
     app.router.add_get("/saude", saude)
     app.router.add_get("/v1/diagnostico", diagnostico)
     app.router.add_get("/v1/tela", tela)
+    app.router.add_post("/v1/pausa", pausa)
+    app.router.add_post("/v1/reabrir-chrome", reabrir_chrome)
     return app
+
+
+def _extensoes_instaladas():
+    """Versões instaladas no perfil (pasta Extensions/<id>/<versão>_0) da nossa extensão e do uBO Lite."""
+    base = os.path.join(config.DIR_PERFIL, "Default", "Extensions")
+    nomes = {config.ID_UBO_LITE: "uBlock Origin Lite"}
+    try:
+        with open(config.ARQ_INFO_EXTENSAO) as f:
+            nomes[json.load(f)["id"]] = "bot-supremo"
+    except (OSError, ValueError, KeyError):
+        pass
+    resultado = {}
+    for id_ext, nome in nomes.items():
+        try:
+            versoes = sorted(os.listdir(os.path.join(base, id_ext)))
+        except OSError:
+            versoes = []
+        resultado[nome] = versoes[-1].rsplit("_", 1)[0] if versoes else None
+    return resultado
 
 
 async def principal():

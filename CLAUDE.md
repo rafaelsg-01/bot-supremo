@@ -150,11 +150,33 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
 `GET /saude` (sem token): Chrome vivo, extensão conectada e versão, memória do Chrome, fila e tela em uso.
 `GET /v1/diagnostico` (com token): permissões efetivas da extensão e contadores de eventos.
 As rotas `GET` também aceitam o token no link (`?token=...`), para o dono abrir no navegador.
+`POST /v1/pausa` (`{"pausado": true, "minutos": 30}` ou `{"pausado": false}`): segura a fila para alguém
+mexer na tela; os pedidos esperam e a pausa acaba sozinha. `POST /v1/reabrir-chrome`: fecha e abre o
+Chrome entre dois pedidos. O `/saude` também mostra `pausa` e `extensoes` (versões instaladas no perfil).
 
-**Endereço público:** `https://bot.iptv01.asia` (túnel próprio `bot-supremo`, ID
+### Painel (`https://painel.iptv01.asia`)
+O jeito do dono monitorar e consertar, com usuário e senha (`PAINEL_USUARIO`/`PAINEL_SENHA` no `.env`
+do notebook, nunca no git; sessão de 10 anos). Código em `painel/`, container `bot-supremo-painel`
+(mesma imagem do bot, `python3 -m painel.app`, porta 8090, rede `flare-net`, socket do Docker montado).
+Ele fica fora da rede do warp para continuar de pé se o bot cair. Mostra:
+- semáforo com frases simples;
+- notebook (CPU, RAM, disco, temperatura);
+- bot (Chrome, extensões com o uBO Lite, fila, pausa, versão);
+- containers;
+- últimos pedidos (lidos das linhas `pedido ... -> ...` do log);
+- log;
+- **a tela do Chrome com mouse e teclado pela internet**: o noVNC sai da própria imagem, e o websocket
+  `/tela/websockify` é repassado a `ws://warp:6080`, só para quem está logado.
+
+Botões: pausar/voltar, testar o site, reabrir o Chrome, reiniciar o bot e reiniciar o notebook (um
+container privilegiado de vida curta com `nsenter ... systemctl reboot`). São só ações fixas, sem
+terminal livre. Após 5 senhas erradas, o IP fica bloqueado por 15 min.
+
+**Endereços públicos:** `https://bot.iptv01.asia` (a API) e `https://painel.iptv01.asia` (o painel), pelo túnel próprio `bot-supremo` (ID
 `a572a95f-5df3-4234-9373-9b4c71ff3eef`, criado com o `cert.pem` de `iptv01.asia` que fica no PC do
 dono em `~/.cloudflared/credencial_iptv01.asia/`). O conector é o serviço `tunel` do `compose.yml`, na
-rede `flare-net`, apontando para `http://warp:8080`. A credencial do túnel fica só no notebook, em
+rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot.` vai para `http://warp:8080`
+e `painel.` para `http://bot-supremo-painel:8090`. A credencial do túnel fica só no notebook, em
 `dados/tunel/credenciais.json`.
 
 ## Peças

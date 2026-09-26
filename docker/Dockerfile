@@ -38,6 +38,8 @@ COPY docker/xorg.conf /etc/X11/bot-supremo.conf
 COPY docker/entrada.sh /opt/bot-supremo/docker/entrada.sh
 COPY extensao /opt/bot-supremo/extensao
 COPY servico /opt/bot-supremo/servico
+# Painel de monitoramento: roda em outro container, com esta mesma imagem (compose.yml, serviço painel).
+COPY painel /opt/bot-supremo/painel
 RUN chmod +x /opt/bot-supremo/docker/entrada.sh
 
 EXPOSE 8080
