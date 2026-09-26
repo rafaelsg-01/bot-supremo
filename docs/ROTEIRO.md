@@ -26,8 +26,7 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 - [x] Xorg na GPU real subindo dentro do container (senão Xvfb, e anotar o porquê)
 - [x] Chrome com sandbox, perfil persistente e as duas extensões instaladas por política
 - [x] Extensão conectada ao serviço (`/saude` com `ok: true`)
-- [ ] `POST /v1/navegar` só com `url` devolvendo o HTML de uma página de lista do site
-      (em 2026-09-23 o servidor do site respondia 522 depois do desafio; tentar de novo)
+- [x] `POST /v1/navegar` só com `url` devolvendo o HTML de uma página de lista do site (redecanais.press, 2026-09-26)
 - [x] Conferir a navegação como "typed" no log (`navegou (transição typed ...)`)
 - [ ] Fila, `about:blank` ao fim e reabertura do Chrome por memória
 - [x] Vigia do desafio: log + gancho vazio + `status: "desafio"` se não sumir
@@ -38,7 +37,7 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 
 - [x] Extensão observa a rede com `chrome.webRequest` (URL, método, status, tipo, horário)
 - [x] Parâmetro `esperarRede` (regex + timeout) e campo `rede` na resposta
-- [ ] Testar no site e anotar o padrão da URL do vídeo
+- [x] Testar no site e anotar o padrão da URL do vídeo
 
 ## Fase 3: cliques
 
@@ -47,8 +46,8 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 - [x] Ação `clicar` com `seExistir` e ação `esperar`
 - [x] Ações `"quando": "desafio"` + busca dentro de shadow DOM fechado + filtro `frame`
 - [x] Clique na caixa do Turnstile resolvendo o desafio (testado em 2026-09-23)
-- [ ] Testar o fluxo completo no site: abrir episódio → clicar no play → capturar a URL do vídeo
-- [ ] Conferir a precisão do clique dentro de iframe do player
+- [x] Testar o fluxo completo no site: abrir episódio → clicar no play → capturar a URL do vídeo
+- [x] Conferir a precisão do clique dentro de iframe do player
 
 ## Fase 4: exposição e operação
 
@@ -57,11 +56,11 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 
 ## Fase 5: ligar o projeto-iptv
 
-- [ ] Reescrever as chamadas de `../projeto-iptv/src/function_rc.ts` para o contrato novo:
+- [x] Reescrever as chamadas de `../projeto-iptv/src/function_rc.ts` para o contrato novo:
       `getHtmlCriptografado` → só `url`; `getReturnJsExecuted` + `Js_getLinkMp4` → `url` + `acoes`
       de clique + `esperarRede`
-- [ ] Adaptar o parser do iptv ao HTML renderizado
-- [ ] Conferir o cache de URLs de vídeo (`mp4-list-*`) e o `/proxy-rc` com o serviço novo
+- [x] Adaptar o parser do iptv ao HTML renderizado
+- [x] Conferir o cache de URLs de vídeo (`mp4-list-*`) e o `/proxy-rc` com o serviço novo
 - [ ] Rodar alguns dias e observar se há ban
 
 ## Fase 6: desligar o FlareSolverr antigo
@@ -90,3 +89,13 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-23 | Desafio do site | redecanais.af mostra um desafio **interativo** do Turnstile (`cType: 'interactive'`) pelo IP do WARP. A caixa é `input[type=checkbox]` (aria-label "Confirme que é humano") num shadow root fechado dentro do iframe de `challenges.cloudflare.com`. Com a ação de desafio, o clique aconteceu em ~10 s e o desafio sumiu em ~52 s. No pedido seguinte não houve desafio (cookie no perfil). |
 | 2026-09-23 | Site fora | Depois do desafio, o redecanais.af respondia **522** (a Cloudflare não alcança o servidor do site), levando ~50–80 s. Problema do site, não do bot. |
 | 2026-09-23 | Diagnóstico do 522 | A página de erro diz "Browser: Working / Cloudflare (Rio de Janeiro): Working / Host: Error". Todos os caminhos (PC de casa, WARP) recebem só o desafio comum "Just a moment...", sem mensagem de ban (no ban de setembro vinha 403 "has banned your IP", erro 1006/1106). O dono confirmou pelo navegador dele que o site caiu. Lição: **522 = servidor do site fora**, não bloqueio do bot. O notebook direto nem resolve o DNS do site (bloqueio do provedor). |
+| 2026-09-26 | Domínio novo | O site agora é **redecanais.press** (o .af caiu). O cookie `cf_clearance` do perfil continuou valendo: nenhum desafio nos testes. |
+| 2026-09-26 | Service worker | O site tem service worker que atende as navegações: a página chega pelo SW (`xmlhttprequest`, aba `-1`), sem request `main_frame` na aba. Isso deixava `statusHttp` vazio e fazia o bot achar que a digitação falhou (abria de novo). Corrigido: status pelo SW e início da navegação por `webNavigation.onBeforeNavigate`. |
+| 2026-09-26 | Listas | `/final_mapafilmes.txt` (17.250 filmes) e `/final_mapa.txt` (5.635 séries) existem. O Chrome mostra o texto num `<pre>`, escapado e lido como Windows-1252 (UTF-8 sem charset). O iptv desfaz as duas coisas (`textoDoPre`). |
+| 2026-09-26 | Série | Página da série (`/browse-...-videos-1-date.html`) renderizada tem o mesmo bloco `pm-category-description` ... `pm-ul-browse-videos` que o parser antigo usa; só troca `<br />` por `<br>`. Episódios são `/musicvideo.php?vid=<id>`. Acentos corretos. |
+| 2026-09-26 | Player | O player fica no iframe `player3/server.php?...`. O botão de play grande é `#submit` (`button.captcha_button`). Ao clicar, o player chama `player3/serverforms.api?...` e, se der certo, o vídeo toca (abre em tela cheia). |
+| 2026-09-26 | Limite do serverforms | **O `serverforms.api` tem limite por IP e tempo.** Várias tentativas seguidas (cada falha faz o player repetir 4x) → 503/521, inclusive para cliques feitos à mão. Depois de ~10 min parado, volta a tocar. Não é ban permanente, nem Linux, nem o bot. O PC do dono funcionava porque o IP do WARP dele é outro. Pedidos de vídeo precisam ser espaçados (o iptv já guarda as URLs por 4 h). |
+| 2026-09-26 | URL do vídeo | O player baixa por um proxy do site: `https://<host>.null-null.shop/<...>/proxy?container=videos&refresh=<n>&url=https://<host>/V/<servidor>/videos/<ID>.mp4?sv=<n>&nu3zAQc9HC3GbwJq=<validade>-<assinatura>`. O mp4 de dentro recusa conexão direta (520); o proxy exige os headers `h31ffadrg3bb7` e `x-requested-with` (os mesmos do `/proxy-rc`). A assinatura vale ~1 h. Padrão usado no iptv: `[?&]url=https?://[^?&]+[.]mp4[?]`. |
+| 2026-09-26 | Fluxo do vídeo | `url` do episódio → esperar 15 s → clicar `#submit` (frame `player3/server.php`) → `esperarRede`. Leva ~30–45 s. Testado em produção no iptv (`/get-list-link-mp4-rc` + `/proxy-rc` = 206 `video/mp4`). |
+| 2026-09-26 | Host estranho | O host do proxy começa com `-_` (`-_kerberos-__tcp-...null-null.shop`). O `wrangler dev` local recusa esse `fetch` ("internal error"), mas a borda real da Cloudflare aceita. Para testar o `/proxy-rc`, só em produção. |
+| 2026-09-26 | iptv no ar | projeto-iptv commit `32a7f68`, versão `89b2bbd6` em produção (anterior: `a65d036f`). Listas, série e mp4 pelo bot. Cache do mp4 limitado pela validade do link. |

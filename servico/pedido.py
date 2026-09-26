@@ -213,7 +213,8 @@ class Execucao:
             # A aba não mostrou o documento: o service worker do site buscou a página por ela.
             self.status_http = self._sw_status.get(self.url_atual.split("#", 1)[0])
         duracao = self._ms(self.inicio)
-        log.info("pedido %s -> %s em %d ms (%s)", self.p["url"], status, duracao, self.etapas)
+        log.info("pedido %s -> %s em %d ms (%s)%s", self.p["url"], status, duracao, self.etapas,
+                 f" erros={self.erros}" if self.erros else "")
         extra = {"inspecao": inspecao} if self.p["inspecionar"] else {}
         return {
             **extra,
@@ -498,7 +499,15 @@ def _ponto_na_tela(dados, filtro_frame=None):
         irmaos = (medidas.get(pai) or {}).get("iframes") or []
         if base is None or not irmaos:
             return None
-        escolhido = next((i for i in irmaos if i["src"] and i["src"] == frame["url"]), None)
+        url_frame = frame["url"].split("#", 1)[0]
+        escolhido = next((i for i in irmaos if i["src"] and i["src"].split("#", 1)[0] == url_frame), None)
+        if escolhido is None:
+            # A URL do frame pode ter mudado um detalhe (parâmetro, redirecionamento): aceita o
+            # iframe com o mesmo endereço sem a query, se só um tiver.
+            base = url_frame.split("?", 1)[0]
+            parecidos = [i for i in irmaos if i["src"] and i["src"].split("#", 1)[0].split("?", 1)[0] == base]
+            if len(parecidos) == 1:
+                escolhido = parecidos[0]
         if escolhido is None:
             filhos = [f for f in frames.values() if f["pai"] == pai]
             if len(irmaos) == 1 or len(filhos) == len(irmaos):
