@@ -152,6 +152,10 @@ class Execucao:
         self._rede_por_id = {}
         self._documentos = set()
         self.status_http = None
+        # Requests do service worker do site (aba -1): id -> URL, e URL -> último status.
+        # Quando o service worker atende a navegação, o status da página só aparece aqui.
+        self._sw_urls = {}
+        self._sw_status = {}
         self.casou = asyncio.Event()
         self.desafio_visto = False
         self.etapas = {}
@@ -205,6 +209,9 @@ class Execucao:
             self.ponte.parar_de_ouvir(fila)
             await self._limpar()
 
+        if self.status_http is None and self.url_atual:
+            # A aba não mostrou o documento: o service worker do site buscou a página por ela.
+            self.status_http = self._sw_status.get(self.url_atual.split("#", 1)[0])
         duracao = self._ms(self.inicio)
         log.info("pedido %s -> %s em %d ms (%s)", self.p["url"], status, duracao, self.etapas)
         extra = {"inspecao": inspecao} if self.p["inspecionar"] else {}
@@ -270,6 +277,8 @@ class Execucao:
                         self._documentos.add(ev["req"])
                         if self.navegando:
                             self.saiu.set()
+                elif aba == -1 and self.navegando:
+                    self._sw_urls[ev["req"]] = ev["url"].split("#", 1)[0]
                 # O service worker do site faz requests com aba -1: também contam.
                 er = self.p["esperarRede"]
                 if er and aba in (self.aba, -1) and er["regex"].search(ev["url"]):
@@ -287,6 +296,9 @@ class Execucao:
             elif tipo == "reqFim":
                 if ev["req"] in self._documentos:
                     self.status_http = ev.get("status")
+                url_sw = self._sw_urls.pop(ev["req"], None)
+                if url_sw and ev.get("status"):
+                    self._sw_status[url_sw] = ev["status"]
                 if ev["req"] in self.pendentes:
                     self.pendentes.discard(ev["req"])
                     self.ultimo_movimento_rede = time.monotonic()
