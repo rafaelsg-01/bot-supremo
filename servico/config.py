@@ -28,6 +28,8 @@ LIMITE_MEMORIA_CHROME_MB = _int("LIMITE_MEMORIA_CHROME_MB", 1100)
 FILA_MAXIMA = _int("FILA_MAXIMA", 30)
 # De quanto em quanto tempo a resposta de /v1/navegar manda um espaço enquanto o pedido não acaba.
 INTERVALO_MANTER_VIVA_S = _int("INTERVALO_MANTER_VIVA_S", 20)
+# Maior "reaproveitarMs" aceito (e por quanto tempo, no máximo, um resultado fica guardado).
+REAPROVEITAR_MAXIMO_MS = _int("REAPROVEITAR_MAXIMO_MS", 3600000)
 TIMEOUT_PADRAO_MS = _int("TIMEOUT_PADRAO_MS", 60000)
 TIMEOUT_MAXIMO_MS = _int("TIMEOUT_MAXIMO_MS", 240000)
 

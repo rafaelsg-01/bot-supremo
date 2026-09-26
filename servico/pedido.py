@@ -87,6 +87,11 @@ def validar(corpo):
             raise ErroValidacao(f"'esperarRede.padrao' inválido: {e}") from None
         esperar_rede = {"regex": regex, "timeoutMs": int(er.get("timeoutMs", 30000))}
 
+    reaproveitar = corpo.get("reaproveitarMs", 0)
+    if not isinstance(reaproveitar, int) or reaproveitar < 0:
+        raise ErroValidacao("'reaproveitarMs' tem que ser um inteiro >= 0")
+    reaproveitar = min(reaproveitar, config.REAPROVEITAR_MAXIMO_MS)
+
     inspecionar = corpo.get("inspecionar")
     if inspecionar is not None and not isinstance(inspecionar, str):
         raise ErroValidacao("'inspecionar' tem que ser um seletor em texto")
@@ -98,6 +103,7 @@ def validar(corpo):
         "esperarRede": esperar_rede,
         "html": bool(corpo.get("html", True)),
         "timeoutMs": timeout,
+        "reaproveitarMs": reaproveitar,
     }
 
 

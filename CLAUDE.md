@@ -1,7 +1,11 @@
 # CLAUDE.md
 
 Guia para qualquer IA que for trabalhar neste repositório. Leia inteiro antes de mexer em algo.
-Depois leia [docs/ROTEIRO.md](docs/ROTEIRO.md) (o que falta fazer e em que ordem).
+Depois leia:
+- [docs/MANUAL.md](docs/MANUAL.md): como o sistema funciona de ponta a ponta (inclusive o lado do
+  projeto-iptv), como diagnosticar, problemas conhecidos, deploy e rollback. **Comece por ele para
+  consertar bugs.**
+- [docs/ROTEIRO.md](docs/ROTEIRO.md): o que falta fazer e o histórico do que foi descoberto.
 
 ## O que é
 
@@ -111,6 +115,14 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
 - `esperarRede.padrao` é uma regex. Ela filtra o que volta em `rede` e o pedido espera a primeira
   request que casar. Requests do service worker do site (aba `-1`) também contam.
 - `timeoutMs` geral: padrão 60000, máximo 240000.
+- `reaproveitarMs` (opcional, padrão 0): se um pedido **idêntico** (mesmo corpo) terminou com `ok: true`
+  há menos desse tempo, a resposta é aquela mesma, na hora, com `"reaproveitado": true`, sem abrir o
+  site. Serve para quem desistiu de esperar e pediu de novo (o Worker do iptv é encerrado quando a TV
+  desiste). Máximo 3600000. Independente disso, um pedido idêntico a um que **ainda** está na fila ou
+  rodando sempre espera o resultado dele, em vez de rodar de novo.
+- **A resposta começa na hora** (cabeçalho 200) e recebe um espaço a cada 20 s até o JSON ficar
+  pronto, porque a Cloudflare corta com 524 a resposta que não começa em ~120 s. Os erros 400, 401 e
+  429 continuam saindo com o status certo, porque são decididos antes.
 
 Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401 para token errado,
 429 para fila cheia):

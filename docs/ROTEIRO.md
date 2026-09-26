@@ -28,7 +28,7 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 - [x] Extensão conectada ao serviço (`/saude` com `ok: true`)
 - [x] `POST /v1/navegar` só com `url` devolvendo o HTML de uma página de lista do site (redecanais.press, 2026-09-26)
 - [x] Conferir a navegação como "typed" no log (`navegou (transição typed ...)`)
-- [ ] Fila, `about:blank` ao fim e reabertura do Chrome por memória
+- [x] Fila, `about:blank` ao fim e reabertura do Chrome por memória (fila testada em rajada, 2026-09-26)
 - [x] Vigia do desafio: log + gancho vazio + `status: "desafio"` se não sumir
 - [ ] Timer do systemd instalado (`sudo bash implantacao/instalar.sh`) e testado com um reboot real
 - [x] Teste de fingerprint (creepjs / sannysoft) pelo próprio bot, com o resultado anotado
@@ -99,3 +99,8 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-26 | Fluxo do vídeo | `url` do episódio → esperar 15 s → clicar `#submit` (frame `player3/server.php`) → `esperarRede`. Leva ~30–45 s. Testado em produção no iptv (`/get-list-link-mp4-rc` + `/proxy-rc` = 206 `video/mp4`). |
 | 2026-09-26 | Host estranho | O host do proxy começa com `-_` (`-_kerberos-__tcp-...null-null.shop`). O `wrangler dev` local recusa esse `fetch` ("internal error"), mas a borda real da Cloudflare aceita. Para testar o `/proxy-rc`, só em produção. |
 | 2026-09-26 | iptv no ar | projeto-iptv commit `32a7f68`, versão `89b2bbd6` em produção (anterior: `a65d036f`). Listas, série e mp4 pelo bot. Cache do mp4 limitado pela validade do link. |
+| 2026-09-26 | Fila | Rajada de 10 pedidos com a fila antiga (máx. 5 no total): 5 levaram 429. Fila foi para 30, e pedidos com o corpo idêntico a um que ainda roda passaram a esperar o mesmo resultado (testado: 12 simultâneos, 2 repetidos, todos entregues em ordem). |
+| 2026-09-26 | 524 da Cloudflare | Resposta que não começa em ~120 s leva 524 (115 s passou; 135 s → 524 em 125 s). Com 10 vídeos pelo iptv, do 4º em diante todos caíam. Correção: `/v1/navegar` manda o cabeçalho na hora e um espaço a cada 20 s até o JSON. |
+| 2026-09-26 | Limite na prática | 11 vídeos seguidos (~35 s cada) capturaram o link, sem 503. O limite do `serverforms.api` estoura com tentativas repetidas em rajada, não com uso normal em fila. |
+| 2026-09-26 | Páginas de série | A lista usa `/browse-…-videos-1-date.html` (5.634 de 5.635). As páginas `…-lista-completa-de-episodios-video_….html` têm outro formato e o parser do iptv devolve vazio. |
+| 2026-09-26 | iptv robusto | Falha do bot não apaga mais lista nem série boa do KV; `fetchBot` tenta de novo em 429/5xx; a busca do link de vídeo usa `waitUntil` e vai para o cache mesmo se a TV desistir. Operação completa em [MANUAL.md](MANUAL.md). |

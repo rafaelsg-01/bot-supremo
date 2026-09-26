@@ -7,10 +7,11 @@ padrão pedido.
 O princípio: o navegador tem que ser indistinguível de uma pessoa usando um PC normal. Chrome real
 com perfil persistente, sem webdriver nem CDP, nada injetado na página e cliques de mouse reais.
 
-**Estado:** em construção.
+**Estado:** em produção (setembro de 2026), usado pelo projeto-iptv.
 
 - Contexto, regras e contrato da API: [CLAUDE.md](CLAUDE.md)
-- O que falta fazer: [docs/ROTEIRO.md](docs/ROTEIRO.md)
+- Como funciona, diagnóstico e deploy: [docs/MANUAL.md](docs/MANUAL.md)
+- O que falta fazer e o histórico: [docs/ROTEIRO.md](docs/ROTEIRO.md)
 
 ## Licença
 
