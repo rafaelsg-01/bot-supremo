@@ -191,7 +191,7 @@ ssh servidor-caseiro "journalctl -u bot-supremo-atualizar --since '1 hour ago' -
 ```
 
 Ver e mexer no Chrome do bot: pelo painel (seção 0), de qualquer lugar. Alternativa de dentro da
-rede, sem o painel: `powershell -ExecutionPolicy Bypass -File implantacao	ela.ps1` (túnel SSH).
+rede, sem o painel: `powershell -ExecutionPolicy Bypass -File implantacao\tela.ps1` (túnel SSH).
 Enquanto alguém mexe pela tela, pause o bot: os pedidos e a pessoa usam a mesma aba.
 
 Teste "no seco" sem o serviço (só xdotool e capturas de tela):
