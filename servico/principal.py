@@ -54,6 +54,9 @@ async def autenticacao(request, handler):
     if not config.TOKEN:
         return web.json_response({"ok": False, "erro": "BOT_TOKEN não configurado no servidor"}, status=503)
     recebido = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not recebido and request.method == "GET":
+        # Para abrir as rotas de consulta direto no navegador: /v1/tela?token=...
+        recebido = request.query.get("token", "").strip()
     if not hmac.compare_digest(recebido.encode(), config.TOKEN.encode()):
         return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
     return await handler(request)

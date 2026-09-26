@@ -149,6 +149,7 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
 
 `GET /saude` (sem token): Chrome vivo, extensão conectada e versão, memória do Chrome, fila e tela em uso.
 `GET /v1/diagnostico` (com token): permissões efetivas da extensão e contadores de eventos.
+As rotas `GET` também aceitam o token no link (`?token=...`), para o dono abrir no navegador.
 
 **Endereço público:** `https://bot.iptv01.asia` (túnel próprio `bot-supremo`, ID
 `a572a95f-5df3-4234-9373-9b4c71ff3eef`, criado com o `cert.pem` de `iptv01.asia` que fica no PC do
