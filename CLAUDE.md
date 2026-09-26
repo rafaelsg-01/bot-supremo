@@ -6,6 +6,8 @@ Depois leia:
   projeto-iptv), como diagnosticar, problemas conhecidos, deploy e rollback. **Comece por ele para
   consertar bugs.**
 - [docs/ROTEIRO.md](docs/ROTEIRO.md): o que falta fazer e o histórico do que foi descoberto.
+  **Próximo trabalho: Fase 7, deixar o link do vídeo mais rápido** (medições e ideias na seção 11
+  do MANUAL).
 
 ## O que é
 

@@ -68,6 +68,17 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 - [ ] Parar e remover o container `content-proxy-web-01` (libera ~620 MB)
 - [ ] Tirar do `~/start.sh` os passos do proxy antigo e conferir que nada mais depende dele
 
+## Fase 7: vídeo mais rápido (próximo trabalho)
+
+Hoje um episódio fora do cache leva ~30–38 s. Medições, ideias e regras em
+[MANUAL.md, seção 11](MANUAL.md#11-tempo-para-achar-o-link-do-vídeo-para-quem-for-otimizar).
+
+- [ ] Testar sem a espera fixa de 15 s (ou com 2–3 s) em alguns episódios, espaçados
+- [ ] Ações logo após o documento chegar, sem esperar a rede quieta (mudança de contrato)
+- [ ] `ATRASO_DIGITACAO_MS` menor
+- [ ] (Perguntar ao dono) buscar o próximo episódio em segundo plano
+- [ ] Registrar os tempos novos em "Descobertas" e atualizar a seção 11 do MANUAL
+
 ---
 
 ## Descobertas e medições

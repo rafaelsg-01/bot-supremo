@@ -260,3 +260,72 @@ vez (~35 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre
 - Tirar do iptv o código antigo do FlareSolverr (`getReturnJsExecuted`, `getHtmlCriptografado`,
   `jsGetLinkMp4.js`, rotas `/diag/*`) quando o dono concordar.
 - Observar por alguns dias se aparece ban (403) ou falhas no `#submit`.
+
+## 11. Tempo para achar o link do vídeo (para quem for otimizar)
+
+Um episódio que **não** está no cache leva **~30–38 s** do clique na TV até o link. Depois fica 4 h
+no KV do iptv e sai em ~0,1 s. O dono quer diminuir esses ~35 s.
+
+### Onde o tempo vai (medido em 2026-09-26, etapas da linha `pedido ... -> concluido em N ms ({...})`)
+
+| Etapa (`etapas` no log) | Tempo | O que é |
+|---|---|---|
+| `navegar` | 2–5 s | foco na janela, `ctrl+L`, digitar a URL (25 ms por letra, `ATRASO_DIGITACAO_MS`) até o servidor responder |
+| `carregar` | 7,5–15 s | página completa **e** rede quieta por 1 s (`REDE_QUIETA_MS`), no máximo 8 s extras (`ESPERA_MAXIMA_REDE_QUIETA_MS`). O site tem anúncios e scripts que mantêm a rede ocupada |
+| `acoes` | 16–18,6 s | **15 s de espera fixa** + ~1,3 s para achar e clicar `#submit` no iframe `player3/server.php` |
+| `rede` | 1,4–4,9 s | depois do clique, o player chama `serverforms.api` duas vezes e então pede o vídeo pelo proxy (é essa request que queremos) |
+| (Worker + túnel) | ~1 s | ida e volta iptv → bot |
+
+Exemplos reais: 29,6 s = navegar 4,2 + carregar 7,5 + acoes 16,2 + rede 1,4; 38,5 s = 2,1 + 14,8 + 18,6 + 2,3.
+
+O pedido é montado em `Function_getLinkMp4List` (`../projeto-iptv/src/function_rc.ts`):
+`esperar 15000` → `clicar #submit (frame player3/server.php, timeout 20 s)` → `esperarRede` com
+`[?&]url=https?://[^?&]+[.]mp4[?]` (timeout 45 s).
+
+### Ideias, da maior economia para a menor
+
+1. **Tirar ou encurtar a espera fixa de 15 s** (até −15 s). Ela entrou enquanto eu investigava os
+   503 do `serverforms.api`, com a suspeita de que um clique rápido demais parecesse robô. A causa
+   provada depois foi outra: o **limite por IP**, estourado por tentativas repetidas. **Nunca foi
+   testado sem a espera.** O `clicar` já espera o `#submit` existir e estar visível, então esperar
+   2–3 s, ou nada, pode bastar. Testar em alguns episódios e conferir se o `serverforms.api` continua
+   200 e o vídeo aparece.
+2. **Não esperar a página "quieta" antes de clicar** (até −5–10 s). O `#submit` aparece bem antes de
+   a rede dos anúncios parar. Opção: um campo novo no contrato (por exemplo `"acoesApos": "commit"`,
+   ou uma ação `quando: "commit"`) para as ações rodarem logo que o documento chega, com o `clicar`
+   esperando o elemento. É mudança de contrato: atualizar o CLAUDE.md.
+3. **Digitar mais rápido** (−1–2 s): `ATRASO_DIGITACAO_MS` de 25 para ~10–12. Continua digitação
+   real; uma pessoa rápida digita nesse ritmo.
+4. **Buscar o próximo episódio antes** (o próximo clique fica instantâneo): quando a TV pede o link
+   do episódio N, o iptv dispara em segundo plano (`context.waitUntil`) a busca do N+1 e guarda no
+   KV. Custa um uso do limite do site por episódio (11 seguidos passaram sem problema). **Muda o
+   quanto o site é usado: perguntar ao dono antes.** Os episódios de uma série estão em
+   `getSeriesInfoRc` / `src/tv/episode.ts` (`nextEpisode` já existe lá).
+
+### Regras que continuam valendo
+
+- **O princípio** (CLAUDE.md): sem CDP/webdriver, nada injetado, clique real. Não chamar o
+  `serverforms.api` por fora nem "adivinhar" a URL do vídeo.
+- **O limite do site**: teste com poucos episódios, espaçados. Rajadas de falhas (cada play que falha
+  faz o player tentar 4x) bloqueiam o IP por ~10 min, até para a TV do dono.
+- **Nada de cache no notebook.** O cache de vídeo é o KV do iptv, com **4 h fixas**. Não mexer no tempo
+  sem perguntar (ver a seção 4 e o que deu errado em 2026-09-26).
+- **Cliente `/tv` frágil**: a mudança fica no bot e no servidor do iptv, nunca no HTML/CSS/JS da TV.
+
+### Como medir
+
+- **Painel** (https://painel.iptv01.asia, seção "Pedidos"): tempo de cada pedido.
+- **Etapas:** no log do bot,
+  `ssh servidor-caseiro "docker logs --since 1h bot-supremo 2>&1 | grep 'pedido https'"`.
+- **Pedir um episódio fora do cache:**
+  `curl -s -A Mozilla/5.0 -w "%{time_total}s
+" "https://iptv01.asia/get-list-link-mp4-rc?linkPage=%2Fmusicvideo.php%3Fvid%3D<id>"`.
+  Tem que devolver uma lista com o link (não `false`), e o link tem que tocar em `/proxy-rc` (206).
+- **Achar episódios ainda não usados:**
+  `https://iptv01.asia/get-list-serie-episode?linkPageSerie=/browse-avatar-a-lenda-de-aang-videos-1-date.html`
+  (61 episódios; os usados em teste ficam 4 h no cache).
+- **Testar o bot direto, sem o iptv e sem cache:** `POST /v1/navegar` com o mesmo corpo que o
+  `Function_getLinkMp4List` monta, mais a ação do desafio (ver `navegarBot` em `bot_supremo.ts`).
+- **Publicar:**
+  - bot: push na `main` e esperar o painel mostrar o commit novo;
+  - iptv: `npx tsc --noEmit -p .` e depois `npx wrangler deploy --env production`.
