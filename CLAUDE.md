@@ -114,6 +114,8 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
 - `inspecionar` (opcional, para depuração): um seletor. A resposta ganha `inspecao` com a medição
   crua de todos os frames no fim do pedido (URLs dos frames, iframes, os primeiros `input`/`button`
   de cada frame e o alvo). Serve para descobrir seletores.
+- `marcarRede` (opcional, para medir): uma regex. Cada request que casar vira marco na `linhaDoTempo`
+  (início e fim, com status). Não muda `rede` nem `esperarRede`.
 - `esperarRede.padrao` é uma regex. Ela filtra o que volta em `rede` e o pedido espera a primeira
   request que casar. Requests do service worker do site (aba `-1`) também contam.
 - `timeoutMs` geral: padrão 60000, máximo 240000.
@@ -139,9 +141,15 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
   "desafio": false,
   "erros": [],
   "duracaoMs": 5230,
-  "etapas": { "navegar": 3100, "desafio": 0, "carregar": 1900, "acoes": 200, "rede": 30 }
+  "etapas": { "fila": 0, "navegar": 3100, "desafio": 0, "carregar": 1900, "acoes": 200, "rede": 30 },
+  "linhaDoTempo": [{ "ms": 12, "marco": "vez" }, { "ms": 1450, "marco": "commit", "url": "..." }]
 }
 ```
+
+- `etapas.fila`: quanto o pedido esperou na fila antes de começar (fica fora de `duracaoMs`).
+- `linhaDoTempo`: marcos do pedido em ms desde que ele chegou à API (fila, digitação, commit,
+  iframes, clique, requests do `marcarRede`, fim). O log do bot tem a mesma coisa numa linha
+  `tempo <url> ...`. Serve para achar onde o tempo vai.
 
 - `ok` só é `true` se `status` for `concluido` **e** `statusHttp` (status HTTP do documento principal)
   não for erro (≥ 400). Exemplo: um `522` da Cloudflare (servidor do site fora) carrega, mas vem com

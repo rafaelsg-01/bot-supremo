@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import math
+import os
 import random
 import re
 import time
@@ -91,10 +92,21 @@ def validar(corpo):
     if inspecionar is not None and not isinstance(inspecionar, str):
         raise ErroValidacao("'inspecionar' tem que ser um seletor em texto")
 
+    # Só para medir: requests que casarem viram marcos na linha do tempo (início e fim, com status).
+    marcar_rede = None
+    if corpo.get("marcarRede") is not None:
+        if not isinstance(corpo["marcarRede"], str):
+            raise ErroValidacao("'marcarRede' tem que ser uma regex em texto")
+        try:
+            marcar_rede = re.compile(corpo["marcarRede"])
+        except re.error as e:
+            raise ErroValidacao(f"'marcarRede' inválido: {e}") from None
+
     return {
         "url": url,
         "acoes": acoes,
         "inspecionar": inspecionar,
+        "marcarRede": marcar_rede,
         "esperarRede": esperar_rede,
         "html": bool(corpo.get("html", True)),
         "timeoutMs": timeout,
@@ -127,17 +139,34 @@ def _eh_desafio(titulo):
     return any(t.startswith(d) for d in TITULOS_DESAFIO)
 
 
+def _url_curta(url, tamanho=70):
+    """Host + caminho, sem a query, para caber no log."""
+    p = urlsplit(url or "")
+    return ((p.hostname or "") + p.path)[:tamanho]
+
+
+def _carga():
+    try:
+        return round(os.getloadavg()[0], 2)
+    except (OSError, AttributeError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Execução
 # ---------------------------------------------------------------------------
 
 
 class Execucao:
-    def __init__(self, pedido, ponte, navegador):
+    def __init__(self, pedido, ponte, navegador, chegada=None):
         self.p = pedido
         self.ponte = ponte
         self.navegador = navegador
         self.inicio = time.monotonic()
+        # Hora em que o pedido chegou à API (antes da fila). A linha do tempo conta a partir dela.
+        self.chegada = chegada or self.inicio
+        self.marcos = []
+        self._marcados = {}  # requests do marcarRede em andamento: id -> URL curta
         self.aba = None
         self.titulo = ""
         self.url_atual = ""
@@ -166,7 +195,27 @@ class Execucao:
     def _ms(self, desde):
         return round((time.monotonic() - desde) * 1000)
 
+    def _marco(self, nome, **extra):
+        """Anota na linha do tempo: ms desde a chegada do pedido, o nome e detalhes opcionais."""
+        self.marcos.append({"ms": self._ms(self.chegada), "marco": nome, **extra})
+
+    def _log_tempo(self):
+        """Uma linha com a linha do tempo inteira, para achar onde o tempo vai."""
+        partes = []
+        frames = 0
+        for m in self.marcos:
+            nome = m["marco"]
+            if nome.startswith("frame_"):
+                frames += 1
+                if frames > 12:
+                    continue
+            detalhe = " ".join(str(v) for k, v in m.items() if k not in ("ms", "marco"))
+            partes.append(f"{nome}={m['ms']}" + (f"[{detalhe}]" if detalhe else ""))
+        log.info("tempo %s carga=%s %s", self.p["url"], _carga(), " ".join(partes))
+
     async def rodar(self):
+        self.etapas["fila"] = self._ms(self.chegada)
+        self._marco("vez")
         fila = self.ponte.ouvir()
         consumidor = asyncio.create_task(self._consumir(fila))
         status = "concluido"
@@ -193,9 +242,11 @@ class Execucao:
                 status = "erro"
                 self.erros.append(f"erro inesperado: {e}")
 
+            self._marco("fim_etapas", status=status)
             if self.p["html"] and self.aba is not None:
                 try:
                     html = await self.ponte.pedir("lerHtml", timeout=15, aba=self.aba)
+                    self._marco("html_lido", kb=round(len(html or "") / 1024))
                 except ErroExtensao as e:
                     self.erros.append(f"falha ao ler o HTML: {e}")
             inspecao = None
@@ -208,6 +259,7 @@ class Execucao:
             consumidor.cancel()
             self.ponte.parar_de_ouvir(fila)
             await self._limpar()
+            self._marco("limpo")
 
         if self.status_http is None and self.url_atual:
             # A aba não mostrou o documento: o service worker do site buscou a página por ela.
@@ -215,6 +267,7 @@ class Execucao:
         duracao = self._ms(self.inicio)
         log.info("pedido %s -> %s em %d ms (%s)%s", self.p["url"], status, duracao, self.etapas,
                  f" erros={self.erros}" if self.erros else "")
+        self._log_tempo()
         extra = {"inspecao": inspecao} if self.p["inspecionar"] else {}
         return {
             **extra,
@@ -231,12 +284,14 @@ class Execucao:
             "erros": self.erros,
             "duracaoMs": duracao,
             "etapas": self.etapas,
+            "linhaDoTempo": self.marcos,
         }
 
     async def _etapas(self):
         t = time.monotonic()
         preparo = await self.ponte.pedir("prepararAba")
         self.aba = preparo["aba"]
+        self._marco("aba_pronta")
         await self._navegar()
         self.etapas["navegar"] = self._ms(t)
 
@@ -277,12 +332,18 @@ class Execucao:
                     if ev.get("tipo") == "main_frame":
                         self._documentos.add(ev["req"])
                         if self.navegando:
-                            self.saiu.set()
+                            self._saiu()
                 elif aba == -1 and self.navegando:
                     self._sw_urls[ev["req"]] = ev["url"].split("#", 1)[0]
+                mr = self.p["marcarRede"]
+                if mr and aba in (self.aba, -1) and mr.search(ev["url"]):
+                    self._marcados[ev["req"]] = _url_curta(ev["url"])
+                    self._marco("req", url=self._marcados[ev["req"]])
                 # O service worker do site faz requests com aba -1: também contam.
                 er = self.p["esperarRede"]
                 if er and aba in (self.aba, -1) and er["regex"].search(ev["url"]):
+                    if not self.casou.is_set():
+                        self._marco("casou", url=_url_curta(ev["url"]))
                     item = {
                         "url": ev["url"],
                         "metodo": ev.get("metodo"),
@@ -295,6 +356,10 @@ class Execucao:
                     self._rede_por_id[ev["req"]] = item
                     self.casou.set()
             elif tipo == "reqFim":
+                url_marcada = self._marcados.pop(ev["req"], None)
+                if url_marcada:
+                    self._marco("req_fim", url=url_marcada, status=ev.get("status"),
+                                **({"erro": ev["erro"]} if ev.get("erro") else {}))
                 if ev["req"] in self._documentos:
                     self.status_http = ev.get("status")
                 url_sw = self._sw_urls.pop(ev["req"], None)
@@ -310,20 +375,30 @@ class Execucao:
                         item["erro"] = ev["erro"]
             elif tipo == "nav" and aba == self.aba and self.navegando:
                 if ev["fase"] == "inicio":
-                    self.saiu.set()
+                    self._saiu()
                 elif ev["fase"] == "commit":
                     self.url_atual = ev["url"]
                     self.carregada.clear()
                     if not self.commit.is_set():
                         log.info("navegou (transição %s %s)", ev.get("transicao"), ev.get("qualificadores"))
+                    self._marco("commit", url=_url_curta(ev["url"]))
                     self.commit.set()
                 elif ev["fase"] == "completo" and self.commit.is_set():
+                    self._marco("completo")
                     self.carregada.set()
+            elif tipo == "navFrame" and aba == self.aba and self.navegando:
+                # Iframes (anúncios, player): só para a linha do tempo.
+                self._marco(f"frame_{ev['fase']}", url=_url_curta(ev.get("url"), 50))
             elif tipo == "aba" and aba == self.aba and self.navegando:
                 if ev.get("titulo") is not None:
                     self.titulo = ev["titulo"]
                 if ev.get("url"):
                     self.url_atual = ev["url"]
+
+    def _saiu(self):
+        if not self.saiu.is_set():
+            self._marco("saiu")
+            self.saiu.set()
 
     # --- navegar ------------------------------------------------------------
 
@@ -333,15 +408,19 @@ class Execucao:
         if not janela:
             raise ErroPedido("janela do Chrome não encontrada")
         await xdotool.focar(janela)
+        self._marco("focou")
         await asyncio.sleep(random.uniform(0.1, 0.25))
         await xdotool.teclas("ctrl+l")
         await asyncio.sleep(random.uniform(0.15, 0.3))
         self.navegando = True
-        await xdotool.digitar(_url_ascii(self.p["url"]), config.ATRASO_DIGITACAO_MS)
+        texto = _url_ascii(self.p["url"])
+        await xdotool.digitar(texto, config.ATRASO_DIGITACAO_MS)
+        self._marco("digitou", letras=len(texto))
         await asyncio.sleep(random.uniform(0.1, 0.25))
         # Delete apaga o "autocompletar" que a barra poderia ter sugerido do histórico.
         await xdotool.teclas("Delete")
         await xdotool.teclas("Return")
+        self._marco("enter")
         # Confirma pelo INÍCIO da navegação, não pela resposta: um servidor lento demora a
         # responder, e abrir de novo pela extensão faria dois acessos.
         try:
@@ -368,13 +447,16 @@ class Execucao:
                 if _eh_desafio(self.titulo) or not self.carregada.is_set():
                     break
                 if time.monotonic() - self.ultimo_movimento_rede >= config.REDE_QUIETA_MS / 1000:
+                    self._marco("quieta", pendentes=len(self.pendentes))
                     return
                 await asyncio.sleep(0.2)
             else:
+                self._marco("quieta_limite", pendentes=len(self.pendentes))
                 return
 
     async def _tratar_desafio(self):
         inicio = time.monotonic()
+        self._marco("desafio_inicio")
         if not self.desafio_visto:
             self.desafio_visto = True
             log.warning("desafio da Cloudflare em %s (título %r)", self.url_atual, self.titulo)
@@ -391,6 +473,7 @@ class Execucao:
         while _eh_desafio(self.titulo):
             await asyncio.sleep(0.5)
         log.info("o desafio sumiu depois de %d ms", self._ms(inicio))
+        self._marco("desafio_fim")
         self.etapas["desafio"] = self.etapas.get("desafio", 0) + self._ms(inicio)
 
     @staticmethod
@@ -408,6 +491,7 @@ class Execucao:
         if acao["tipo"] == "esperar":
             await asyncio.sleep(acao["ms"] / 1000)
             registro["resultado"] = "esperou"
+            self._marco("esperou", ms_pedidos=acao["ms"])
         else:
             registro["seletor"] = acao["seletor"]
             registro["resultado"] = await self._clicar(acao)
@@ -419,10 +503,12 @@ class Execucao:
     async def _clicar(self, acao):
         limite = time.monotonic() + acao["timeoutMs"] / 1000
         rolagens = 0
+        medicoes = 0
         while True:
             if acao["quando"] == "desafio" and not _eh_desafio(self.titulo):
                 return "nao_precisou"
             try:
+                medicoes += 1
                 dados = await self.ponte.pedir("localizar", aba=self.aba, seletor=acao["seletor"])
             except ErroExtensao as e:
                 # Frame sumindo no meio de uma navegação, por exemplo. Tenta de novo até o limite.
@@ -436,9 +522,11 @@ class Execucao:
                 raise ErroPedido(f"seletor inválido {acao['seletor']!r}: {erro_seletor}")
             alvo = _ponto_na_tela(dados, acao.get("frame"))
             if alvo and alvo["fora"] == 0:
+                self._marco("achou", seletor=acao["seletor"], medicoes=medicoes, rolagens=rolagens)
                 if alvo["coberto"]:
                     log.info("o elemento %r parece coberto por outro; clicando mesmo assim", acao["seletor"])
                 await xdotool.clicar(alvo["x"], alvo["y"])
+                self._marco("clicou")
                 await asyncio.sleep(random.uniform(0.3, 0.6))
                 return "clicou"
             if alvo and rolagens < 30:

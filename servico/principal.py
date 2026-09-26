@@ -115,7 +115,8 @@ def criar_api(ponte, navegador, fila):
             if fila.na_fila >= fila.maximo:
                 return web.json_response({"ok": False, "erro": "fila cheia, tente de novo daqui a pouco"}, status=429)
             # A execução segue até o fim mesmo se quem pediu desistir, para a aba não ficar pela metade.
-            tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador).rodar()))
+            chegada = time.monotonic()
+            tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador, chegada).rodar()))
             fila.em_andamento[chave] = tarefa
             tarefa.add_done_callback(lambda _t: fila.em_andamento.pop(chave, None))
         # A Cloudflare corta (524) a resposta que não começa em ~120 s, e um pedido que espera na

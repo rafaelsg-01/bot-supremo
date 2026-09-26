@@ -259,9 +259,14 @@ chrome.webNavigation.onBeforeNavigate.addListener((d) => {
   enviar({ evento: "nav", fase: "inicio", aba: d.tabId, url: d.url });
 });
 
+// Iframes (player, anúncios): só para a linha do tempo do pedido.
+function navFrame(fase, d) {
+  enviar({ evento: "navFrame", fase, aba: d.tabId, frame: d.frameId, url: d.url });
+}
+
 chrome.webNavigation.onCommitted.addListener((d) => {
   CONTADORES.nav++;
-  if (d.frameId !== 0) return;
+  if (d.frameId !== 0) return navFrame("commit", d);
   enviar({
     evento: "nav",
     fase: "commit",
@@ -273,7 +278,7 @@ chrome.webNavigation.onCommitted.addListener((d) => {
 });
 
 chrome.webNavigation.onCompleted.addListener((d) => {
-  if (d.frameId !== 0) return;
+  if (d.frameId !== 0) return navFrame("completo", d);
   enviar({ evento: "nav", fase: "completo", aba: d.tabId, url: d.url });
 });
 
