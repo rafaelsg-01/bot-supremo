@@ -101,9 +101,12 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
 | `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
 | `Function_getLinkMp4List` | episódio/filme + esperar 15 s + clicar `#submit` no frame `player3/server.php` + `esperarRede` com a URL do vídeo | `mp4-list-<linkPage>`, até o link vencer menos 5 min (~55 min) |
 
-- **Sempre** use `Function_getLinkMp4ListComCache(env, linkPage, context)`, com o `context`: ele usa
-  `waitUntil`, então a busca termina e vai para o cache **mesmo se a TV desistir de esperar**. O
-  próximo clique já sai do cache.
+- **Sempre** use `Function_getLinkMp4ListComCache(env, linkPage, context)`, com o `context`. Ele usa
+  `waitUntil`, mas isso só dá uns 30 s extras depois que a TV desiste: a Cloudflare encerra o Worker.
+  Por isso o pedido de vídeo também manda `reaproveitarMs: 600000`, e o bot guarda o link por 10 min
+  para o próximo clique. Os dois juntos cobrem a TV que desiste de esperar.
+- O KV da Cloudflare pode continuar respondendo "não achei" por até 60 s depois de gravado (cache de
+  leitura negativa). O `reaproveitarMs` também cobre essa janela.
 - Os 4 lugares que pedem vídeo (`/get-list-link-mp4`, `/get-list-link-mp4-rc`, `src/tv/movie.ts`,
   `src/tv/episode.ts`) usam a mesma chave de propósito.
 - **Cuidado:** o HTML, o CSS e o JS **do cliente** `/tv` rodam num navegador de TV muito antigo, e
@@ -222,6 +225,12 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | Pedido de 135 s direto (antes da correção) | 524 em 125 s → resposta passou a começar na hora, com espaços |
 | 10 vídeos novos ao mesmo tempo pelo iptv (antes da correção) | 3 OK; os outros 7 com 524 no Worker, mas o bot terminou todos |
 | 11 vídeos seguidos no site | todos capturaram o link (28–44 s cada), sem bater no limite |
+| 10 vídeos novos ao mesmo tempo pelo iptv (com a resposta em espaços) | 8 entregues, o último depois de 255 s na fila. Os 2 últimos: a Cloudflare fechou a conexão cliente→Worker em ~270 s, mas o bot terminou os dois |
+| TV desiste em 15 s e clica de novo 45 s depois (com `reaproveitarMs`) | link em 0,1 s, reaproveitado do bot (o KV ainda respondia "não achei" por causa do cache de 60 s da Cloudflare) |
+
+Na prática: **um vídeo novo leva ~35 s**. Com vários vídeos novos pedidos juntos, cada um espera a sua
+vez (~35 s por vídeo à frente). Se a TV desistir antes, o próximo clique no mesmo vídeo recebe o link
+na hora (até 10 min depois pelo bot, até ~55 min pelo KV).
 
 ## 10. Pendências
 
