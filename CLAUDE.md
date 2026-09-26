@@ -172,7 +172,9 @@ rede `flare-net`, apontando para `http://warp:8080`. A credencial do túnel fica
    `web_accessible_resources`, então nenhuma página consegue sondar que ela existe.
 3. **Serviço em Python** (`servico/`, aiohttp):
    - expõe a API HTTP na porta 8080;
-   - mantém uma **fila** (um pedido por vez, uma aba por vez, até 5 esperando);
+   - mantém uma **fila** (um pedido por vez, uma aba por vez, na ordem de chegada, até 30 no total).
+     Pedidos com o corpo idêntico a um que ainda está na fila ou rodando não entram de novo: recebem
+     o mesmo resultado;
    - conversa com a extensão;
    - **abre a URL digitando na barra de endereço** (`ctrl+L`, digita, `Delete`, Enter) com xdotool,
      como uma pessoa. Assim a navegação chega ao site como digitada; um `chrome.tabs.update` não

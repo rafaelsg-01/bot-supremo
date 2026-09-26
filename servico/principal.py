@@ -24,12 +24,18 @@ class FilaCheia(Exception):
 
 
 class Fila:
-    """Um pedido por vez. Até FILA_MAXIMA esperando; além disso, recusa."""
+    """Um pedido por vez, na ordem de chegada. Até FILA_MAXIMA no total (rodando + esperando).
+
+    Pedidos idênticos (mesmo corpo) que chegam enquanto um igual ainda está na fila ou rodando não
+    entram de novo: esperam o mesmo resultado. Assim quem repete um pedido (ex.: a TV tentando de
+    novo o mesmo episódio) não faz o site ser visitado duas vezes.
+    """
 
     def __init__(self, maximo):
         self.maximo = maximo
         self.trava = asyncio.Lock()
         self.na_fila = 0
+        self.em_andamento = {}
 
     async def executar(self, fabrica):
         self.na_fila += 1
@@ -62,10 +68,17 @@ def criar_api(ponte, navegador, fila):
             pedido = validar(corpo)
         except ErroValidacao as e:
             return web.json_response({"ok": False, "erro": str(e)}, status=400)
-        if fila.na_fila >= fila.maximo:
-            return web.json_response({"ok": False, "erro": "fila cheia, tente de novo daqui a pouco"}, status=429)
-        # A execução segue até o fim mesmo se quem pediu desistir, para a aba não ficar pela metade.
-        tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador).rodar()))
+        chave = json.dumps(corpo, sort_keys=True, ensure_ascii=False)
+        tarefa = fila.em_andamento.get(chave)
+        if tarefa is not None:
+            log.info("pedido repetido enquanto o igual ainda roda; esperando o mesmo resultado: %s", pedido["url"])
+        else:
+            if fila.na_fila >= fila.maximo:
+                return web.json_response({"ok": False, "erro": "fila cheia, tente de novo daqui a pouco"}, status=429)
+            # A execução segue até o fim mesmo se quem pediu desistir, para a aba não ficar pela metade.
+            tarefa = asyncio.create_task(fila.executar(lambda: Execucao(pedido, ponte, navegador).rodar()))
+            fila.em_andamento[chave] = tarefa
+            tarefa.add_done_callback(lambda _t: fila.em_andamento.pop(chave, None))
         resposta = await asyncio.shield(tarefa)
         return web.json_response(resposta)
 

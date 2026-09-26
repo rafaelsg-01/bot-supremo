@@ -23,7 +23,9 @@ ARQ_INFO_EXTENSAO = os.path.join(DIR_ESTADO, "extensao.json")
 # Acima disso (soma dos processos do Chrome), o Chrome é reaberto entre dois pedidos.
 LIMITE_MEMORIA_CHROME_MB = _int("LIMITE_MEMORIA_CHROME_MB", 1100)
 
-FILA_MAXIMA = _int("FILA_MAXIMA", 5)
+# Pedidos no total (rodando + esperando). Esperar custa quase nada (só uma conexão aberta); o
+# limite existe para não acumular horas de trabalho se algo chamar em loop.
+FILA_MAXIMA = _int("FILA_MAXIMA", 30)
 TIMEOUT_PADRAO_MS = _int("TIMEOUT_PADRAO_MS", 60000)
 TIMEOUT_MAXIMO_MS = _int("TIMEOUT_MAXIMO_MS", 240000)
 
