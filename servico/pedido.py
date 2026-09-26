@@ -142,7 +142,7 @@ class Execucao:
         self.titulo = ""
         self.url_atual = ""
         self.navegando = False
-        # saiu: a request do documento principal partiu. commit: a resposta chegou.
+        # saiu: a navegação começou (webNavigation ou request do documento). commit: a resposta chegou.
         self.saiu = asyncio.Event()
         self.commit = asyncio.Event()
         self.carregada = asyncio.Event()
@@ -308,7 +308,9 @@ class Execucao:
                     if ev.get("erro"):
                         item["erro"] = ev["erro"]
             elif tipo == "nav" and aba == self.aba and self.navegando:
-                if ev["fase"] == "commit":
+                if ev["fase"] == "inicio":
+                    self.saiu.set()
+                elif ev["fase"] == "commit":
                     self.url_atual = ev["url"]
                     self.carregada.clear()
                     if not self.commit.is_set():
@@ -339,7 +341,7 @@ class Execucao:
         # Delete apaga o "autocompletar" que a barra poderia ter sugerido do histórico.
         await xdotool.teclas("Delete")
         await xdotool.teclas("Return")
-        # Confirma pela SAÍDA da request, não pela resposta: um servidor lento demora a
+        # Confirma pelo INÍCIO da navegação, não pela resposta: um servidor lento demora a
         # responder, e abrir de novo pela extensão faria dois acessos.
         try:
             await asyncio.wait_for(self.saiu.wait(), 10)

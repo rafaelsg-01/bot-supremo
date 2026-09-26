@@ -252,6 +252,13 @@ chrome.webRequest.onErrorOccurred.addListener((d) => {
   enviar({ evento: "reqFim", req: d.requestId, aba: d.tabId, status: null, erro: d.error, horario: d.timeStamp });
 }, FILTRO);
 
+// Início da navegação. Dispara mesmo quando o service worker do site atende a página
+// (nesse caso a aba não emite a request do documento no webRequest).
+chrome.webNavigation.onBeforeNavigate.addListener((d) => {
+  if (d.frameId !== 0) return;
+  enviar({ evento: "nav", fase: "inicio", aba: d.tabId, url: d.url });
+});
+
 chrome.webNavigation.onCommitted.addListener((d) => {
   CONTADORES.nav++;
   if (d.frameId !== 0) return;
