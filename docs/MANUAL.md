@@ -6,7 +6,7 @@ como o sistema funciona de ponta a ponta, onde olhar quando algo quebra e como m
 - As **regras** (o princípio, o contrato da API, o que não pode) estão no [CLAUDE.md](../CLAUDE.md).
   Leia antes deste arquivo.
 - O **histórico** do que foi feito e medido está no [ROTEIRO.md](ROTEIRO.md).
-- A lista de endereços úteis (saúde, tela, rotas de teste do iptv) está em `../projeto-iptv/LINKS.txt`.
+- A lista de endereços úteis, com as senhas, está em `../projeto-iptv/LINKS.txt`, **só no PC do dono** (fora do git).
 - Este manual é o **como funciona e como consertar**. Atualize-o quando mudar algo que ele descreve.
 
 Estado em 2026-09-26: em produção. A TV e o site do iptv pegam listas, séries e vídeos do Rede Canais
