@@ -7,7 +7,7 @@ import random
 import re
 import time
 import unicodedata
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from . import config, gancho_desafio, xdotool
 from .ponte import ErroExtensao
@@ -66,10 +66,28 @@ def validar(corpo):
             frame = acao.get("frame")
             if frame is not None and not isinstance(frame, str):
                 raise ErroValidacao(f"acoes[{i}].frame tem que ser texto (pedaço da URL do frame)")
+            frame_completo = bool(acao.get("frameCompleto", False))
+            if frame_completo and not frame:
+                raise ErroValidacao(f"acoes[{i}].frameCompleto exige 'frame'")
+            confirmar = None
+            if acao.get("confirmarRede") is not None:
+                if not isinstance(acao["confirmarRede"], str):
+                    raise ErroValidacao(f"acoes[{i}].confirmarRede tem que ser uma regex em texto")
+                try:
+                    confirmar = re.compile(acao["confirmarRede"])
+                except re.error as e:
+                    raise ErroValidacao(f"acoes[{i}].confirmarRede inválido: {e}") from None
+            tentativas = acao.get("tentativas", 1)
+            if not isinstance(tentativas, int) or not 1 <= tentativas <= 5:
+                raise ErroValidacao(f"acoes[{i}].tentativas tem que ser um inteiro de 1 a 5")
             acoes.append({
                 "tipo": "clicar",
                 "seletor": seletor,
                 "frame": frame,
+                "frameCompleto": frame_completo,
+                "confirmarRede": confirmar,
+                "confirmarMs": int(acao.get("confirmarMs", 4000)),
+                "tentativas": tentativas if confirmar else 1,
                 "seExistir": bool(acao.get("seExistir", False)),
                 "timeoutMs": int(acao.get("timeoutMs", 10000)),
                 "quando": quando,
@@ -102,9 +120,14 @@ def validar(corpo):
         except re.error as e:
             raise ErroValidacao(f"'marcarRede' inválido: {e}") from None
 
+    esperar_pagina = corpo.get("esperarPagina", "quieta")
+    if esperar_pagina not in ("quieta", "completa", "nao"):
+        raise ErroValidacao("'esperarPagina' tem que ser 'quieta', 'completa' ou 'nao'")
+
     return {
         "url": url,
         "acoes": acoes,
+        "esperarPagina": esperar_pagina,
         "inspecionar": inspecionar,
         "marcarRede": marcar_rede,
         "esperarRede": esperar_rede,
@@ -137,6 +160,16 @@ def _url_ascii(url):
 def _eh_desafio(titulo):
     t = unicodedata.normalize("NFKC", titulo or "").strip().lower()
     return any(t.startswith(d) for d in TITULOS_DESAFIO)
+
+
+def _mesma_url(aberta, digitada):
+    """A navegação começou no endereço digitado? (mesmo host, caminho e query)"""
+    if not aberta:
+        return False
+    a, d = urlsplit(aberta), urlsplit(digitada)
+    return ((a.hostname or "").lower() == (d.hostname or "").lower()
+            and unquote(a.path or "/") == unquote(d.path or "/")
+            and unquote(a.query) == unquote(d.query))
 
 
 def _url_curta(url, tamanho=70):
@@ -173,6 +206,7 @@ class Execucao:
         self.navegando = False
         # saiu: a navegação começou (webNavigation ou request do documento). commit: a resposta chegou.
         self.saiu = asyncio.Event()
+        self.url_saida = None  # a URL com que a navegação começou (para conferir a digitação)
         self.commit = asyncio.Event()
         self.carregada = asyncio.Event()
         self.ultimo_movimento_rede = time.monotonic()
@@ -186,6 +220,10 @@ class Execucao:
         self._sw_urls = {}
         self._sw_status = {}
         self.casou = asyncio.Event()
+        # Iframes que terminaram de carregar (onCompleted), por id: o sinal de "player pronto".
+        self.frames_completos = {}
+        # Confirmação do clique: {"regex", "evento", "url"} enquanto um clique espera o site reagir.
+        self._confirmacao = None
         self.desafio_visto = False
         self.etapas = {}
         self.erros = []
@@ -295,9 +333,10 @@ class Execucao:
         await self._navegar()
         self.etapas["navegar"] = self._ms(t)
 
-        t = time.monotonic()
-        await self._esperar_carregar()
-        self.etapas["carregar"] = self._ms(t)
+        if self.p["esperarPagina"] != "nao":
+            t = time.monotonic()
+            await self._esperar_carregar()
+            self.etapas["carregar"] = self._ms(t)
 
         acoes = [a for a in self.p["acoes"] if a["quando"] == "carregada"]
         if acoes:
@@ -332,13 +371,17 @@ class Execucao:
                     if ev.get("tipo") == "main_frame":
                         self._documentos.add(ev["req"])
                         if self.navegando:
-                            self._saiu()
+                            self._saiu(ev["url"])
                 elif aba == -1 and self.navegando:
                     self._sw_urls[ev["req"]] = ev["url"].split("#", 1)[0]
                 mr = self.p["marcarRede"]
                 if mr and aba in (self.aba, -1) and mr.search(ev["url"]):
                     self._marcados[ev["req"]] = _url_curta(ev["url"])
                     self._marco("req", url=self._marcados[ev["req"]])
+                conf = self._confirmacao
+                if conf and not conf["evento"].is_set() and aba in (self.aba, -1) and conf["regex"].search(ev["url"]):
+                    conf["url"] = _url_curta(ev["url"])
+                    conf["evento"].set()
                 # O service worker do site faz requests com aba -1: também contam.
                 er = self.p["esperarRede"]
                 if er and aba in (self.aba, -1) and er["regex"].search(ev["url"]):
@@ -375,10 +418,11 @@ class Execucao:
                         item["erro"] = ev["erro"]
             elif tipo == "nav" and aba == self.aba and self.navegando:
                 if ev["fase"] == "inicio":
-                    self._saiu()
+                    self._saiu(ev.get("url"))
                 elif ev["fase"] == "commit":
                     self.url_atual = ev["url"]
                     self.carregada.clear()
+                    self.frames_completos.clear()
                     if not self.commit.is_set():
                         log.info("navegou (transição %s %s)", ev.get("transicao"), ev.get("qualificadores"))
                     self._marco("commit", url=_url_curta(ev["url"]))
@@ -387,16 +431,21 @@ class Execucao:
                     self._marco("completo")
                     self.carregada.set()
             elif tipo == "navFrame" and aba == self.aba and self.navegando:
-                # Iframes (anúncios, player): só para a linha do tempo.
-                self._marco(f"frame_{ev['fase']}", url=_url_curta(ev.get("url"), 50))
+                # Iframes (anúncios, player). Um commit novo do mesmo frame desfaz o "completo".
+                if ev["fase"] == "commit":
+                    self.frames_completos.pop(ev.get("frame"), None)
+                elif ev["fase"] == "completo":
+                    self.frames_completos[ev.get("frame")] = ev.get("url") or ""
+                self._marco(f"frame_{ev['fase']}", id=ev.get("frame"), url=_url_curta(ev.get("url"), 50))
             elif tipo == "aba" and aba == self.aba and self.navegando:
                 if ev.get("titulo") is not None:
                     self.titulo = ev["titulo"]
                 if ev.get("url"):
                     self.url_atual = ev["url"]
 
-    def _saiu(self):
+    def _saiu(self, url):
         if not self.saiu.is_set():
+            self.url_saida = url
             self._marco("saiu")
             self.saiu.set()
 
@@ -404,16 +453,49 @@ class Execucao:
 
     async def _navegar(self):
         """Digita a URL na barra de endereço, como uma pessoa."""
+        texto = _url_ascii(self.p["url"])
+        for tentativa in (1, 2):
+            await self._digitar_url(texto)
+            # Confirma pelo INÍCIO da navegação, não pela resposta: um servidor lento demora a
+            # responder, e abrir de novo pela extensão faria dois acessos.
+            try:
+                await asyncio.wait_for(self.saiu.wait(), 10)
+            except TimeoutError:
+                log.warning("a digitação não navegou em 10s; usando chrome.tabs como reserva")
+                self.erros.append("aviso: a URL não pôde ser digitada; aberta pela extensão")
+                await self.ponte.pedir("irPara", aba=self.aba, url=self.p["url"])
+                break
+            if _mesma_url(self.url_saida, texto):
+                break
+            # Uma tecla se perdeu (já aconteceu: "tps://..." virou uma busca no Google).
+            log.warning("a digitação abriu %r em vez de %r (tentativa %d)", self.url_saida, texto, tentativa)
+            self._marco("digitou_errado", url=_url_curta(self.url_saida))
+            self.erros.append(f"aviso: a digitação abriu {_url_curta(self.url_saida)!r}; "
+                              + ("digitando de novo" if tentativa == 1 else "aberta pela extensão"))
+            # Deixa a navegação errada chegar ao fim do commit antes de trocar, para os eventos
+            # dela não se misturarem com os da certa.
+            try:
+                await asyncio.wait_for(self.commit.wait(), 10)
+            except TimeoutError:
+                pass
+            self.saiu.clear()
+            self.commit.clear()
+            self.url_saida = None
+            if tentativa == 2:
+                await self.ponte.pedir("irPara", aba=self.aba, url=self.p["url"])
+        await self.commit.wait()
+
+    async def _digitar_url(self, texto):
         janela = await xdotool.janela_chrome()
         if not janela:
             raise ErroPedido("janela do Chrome não encontrada")
-        await xdotool.focar(janela)
-        self._marco("focou")
+        self._marco("achou_janela")
+        precisou = await xdotool.focar(janela)
+        self._marco("focou", ativou=precisou)
         await asyncio.sleep(random.uniform(0.1, 0.25))
         await xdotool.teclas("ctrl+l")
         await asyncio.sleep(random.uniform(0.15, 0.3))
         self.navegando = True
-        texto = _url_ascii(self.p["url"])
         await xdotool.digitar(texto, config.ATRASO_DIGITACAO_MS)
         self._marco("digitou", letras=len(texto))
         await asyncio.sleep(random.uniform(0.1, 0.25))
@@ -421,15 +503,6 @@ class Execucao:
         await xdotool.teclas("Delete")
         await xdotool.teclas("Return")
         self._marco("enter")
-        # Confirma pelo INÍCIO da navegação, não pela resposta: um servidor lento demora a
-        # responder, e abrir de novo pela extensão faria dois acessos.
-        try:
-            await asyncio.wait_for(self.saiu.wait(), 10)
-        except TimeoutError:
-            log.warning("a digitação não navegou em 10s; usando chrome.tabs como reserva")
-            self.erros.append("aviso: a URL não pôde ser digitada; aberta pela extensão")
-            await self.ponte.pedir("irPara", aba=self.aba, url=self.p["url"])
-        await self.commit.wait()
 
     # --- carregar -----------------------------------------------------------
 
@@ -442,6 +515,8 @@ class Execucao:
                 await asyncio.wait_for(self.carregada.wait(), 1)
             except TimeoutError:
                 continue
+            if self.p["esperarPagina"] == "completa":
+                return
             limite = time.monotonic() + config.ESPERA_MAXIMA_REDE_QUIETA_MS / 1000
             while time.monotonic() < limite:
                 if _eh_desafio(self.titulo) or not self.carregada.is_set():
@@ -494,7 +569,8 @@ class Execucao:
             self._marco("esperou", ms_pedidos=acao["ms"])
         else:
             registro["seletor"] = acao["seletor"]
-            registro["resultado"] = await self._clicar(acao)
+            registro["resultado"], extra = await self._clicar(acao)
+            registro.update(extra)
         registro["ms"] = self._ms(inicio)
         self.resultado_acoes.append(registro)
         if registro["resultado"] == "nao_existia" and not acao.get("seExistir"):
@@ -504,42 +580,92 @@ class Execucao:
         limite = time.monotonic() + acao["timeoutMs"] / 1000
         rolagens = 0
         medicoes = 0
-        while True:
-            if acao["quando"] == "desafio" and not _eh_desafio(self.titulo):
-                return "nao_precisou"
-            try:
-                medicoes += 1
-                dados = await self.ponte.pedir("localizar", aba=self.aba, seletor=acao["seletor"])
-            except ErroExtensao as e:
-                # Frame sumindo no meio de uma navegação, por exemplo. Tenta de novo até o limite.
+        cliques = 0
+        conf = None
+        if acao["confirmarRede"]:
+            # Um objeto só para todas as tentativas: uma reação atrasada ao 1º clique também conta,
+            # e impede um 2º clique (o site já está trabalhando; clicar de novo só gastaria o limite).
+            conf = {"regex": acao["confirmarRede"], "evento": asyncio.Event(), "url": None}
+        try:
+            while True:
+                if acao["quando"] == "desafio" and not _eh_desafio(self.titulo):
+                    return "nao_precisou", {}
+                if acao["quando"] != "desafio" and _eh_desafio(self.titulo):
+                    # Com esperarPagina "nao" as ações começam antes de o desafio ser tratado.
+                    await self._tratar_desafio()
+                    continue
+                if conf and conf["evento"].is_set():
+                    return self._confirmado(conf, cliques)
+                if acao["frameCompleto"] and not any(acao["frame"] in u for u in self.frames_completos.values()):
+                    # O player ainda não terminou de carregar: uma pessoa ainda estaria esperando.
+                    if time.monotonic() >= limite:
+                        return "nao_existia", {}
+                    await asyncio.sleep(0.2)
+                    continue
+                try:
+                    medicoes += 1
+                    dados = await self.ponte.pedir("localizar", aba=self.aba, seletor=acao["seletor"])
+                except ErroExtensao as e:
+                    # Frame sumindo no meio de uma navegação, por exemplo. Tenta de novo até o limite.
+                    if time.monotonic() >= limite:
+                        raise
+                    log.info("falha ao medir %r (%s); tentando de novo", acao["seletor"], e)
+                    await asyncio.sleep(0.5)
+                    continue
+                erro_seletor = next((m["erroSeletor"] for m in dados["medidas"] if m.get("erroSeletor")), None)
+                if erro_seletor:
+                    raise ErroPedido(f"seletor inválido {acao['seletor']!r}: {erro_seletor}")
+                alvo = _ponto_na_tela(dados, acao.get("frame"))
+                if alvo and alvo["fora"] == 0:
+                    self._marco("achou", seletor=acao["seletor"], medicoes=medicoes, rolagens=rolagens)
+                    if alvo["coberto"]:
+                        log.info("o elemento %r parece coberto por outro; clicando mesmo assim", acao["seletor"])
+                    if acao["frameCompleto"]:
+                        # O botão pode ter acabado de aparecer: a pessoa vê e só então clica.
+                        await asyncio.sleep(random.uniform(0.2, 0.6))
+                    if conf and conf["evento"].is_set():
+                        return self._confirmado(conf, cliques)
+                    if conf:
+                        self._confirmacao = conf
+                    await xdotool.clicar(alvo["x"], alvo["y"])
+                    cliques += 1
+                    self._marco("clicou", vez=cliques)
+                    if not conf:
+                        await asyncio.sleep(random.uniform(0.3, 0.6))
+                        return "clicou", {}
+                    try:
+                        await asyncio.wait_for(conf["evento"].wait(), acao["confirmarMs"] / 1000)
+                        return self._confirmado(conf, cliques)
+                    except TimeoutError:
+                        pass
+                    if cliques >= acao["tentativas"]:
+                        self._marco("sem_reacao", cliques=cliques)
+                        return "sem_reacao", {"cliques": cliques, "confirmado": False}
+                    self._marco("clique_de_novo")
+                    log.info("o site não reagiu ao clique em %r; clicando de novo", acao["seletor"])
+                    medicoes = 0
+                    continue
+                if alvo and rolagens < 30:
+                    # Fora da área visível: rola com a roda do mouse, sobre o meio da página.
+                    await xdotool.mover(*alvo["meio_da_pagina"])
+                    n = max(1, min(5, math.ceil(abs(alvo["fora"]) / 100)))
+                    await xdotool.rolar(n, para_baixo=alvo["fora"] > 0)
+                    rolagens += 1
+                    await asyncio.sleep(0.3)
+                    continue
                 if time.monotonic() >= limite:
-                    raise
-                log.info("falha ao medir %r (%s); tentando de novo", acao["seletor"], e)
-                await asyncio.sleep(0.5)
-                continue
-            erro_seletor = next((m["erroSeletor"] for m in dados["medidas"] if m.get("erroSeletor")), None)
-            if erro_seletor:
-                raise ErroPedido(f"seletor inválido {acao['seletor']!r}: {erro_seletor}")
-            alvo = _ponto_na_tela(dados, acao.get("frame"))
-            if alvo and alvo["fora"] == 0:
-                self._marco("achou", seletor=acao["seletor"], medicoes=medicoes, rolagens=rolagens)
-                if alvo["coberto"]:
-                    log.info("o elemento %r parece coberto por outro; clicando mesmo assim", acao["seletor"])
-                await xdotool.clicar(alvo["x"], alvo["y"])
-                self._marco("clicou")
-                await asyncio.sleep(random.uniform(0.3, 0.6))
-                return "clicou"
-            if alvo and rolagens < 30:
-                # Fora da área visível: rola com a roda do mouse, sobre o meio da página.
-                await xdotool.mover(*alvo["meio_da_pagina"])
-                cliques = max(1, min(5, math.ceil(abs(alvo["fora"]) / 100)))
-                await xdotool.rolar(cliques, para_baixo=alvo["fora"] > 0)
-                rolagens += 1
-                await asyncio.sleep(0.3)
-                continue
-            if time.monotonic() >= limite:
-                return "nao_existia"
-            await asyncio.sleep(0.4)
+                    if cliques:
+                        self._marco("sem_reacao", cliques=cliques)
+                        return "sem_reacao", {"cliques": cliques, "confirmado": False}
+                    return "nao_existia", {}
+                await asyncio.sleep(0.4)
+        finally:
+            if self._confirmacao is conf:
+                self._confirmacao = None
+
+    def _confirmado(self, conf, cliques):
+        self._marco("confirmou", url=conf["url"])
+        return "clicou", {"cliques": cliques, "confirmado": True}
 
     # --- fim ----------------------------------------------------------------
 

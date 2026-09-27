@@ -31,7 +31,7 @@ INTERVALO_MANTER_VIVA_S = _int("INTERVALO_MANTER_VIVA_S", 20)
 TIMEOUT_PADRAO_MS = _int("TIMEOUT_PADRAO_MS", 60000)
 TIMEOUT_MAXIMO_MS = _int("TIMEOUT_MAXIMO_MS", 240000)
 
-ATRASO_DIGITACAO_MS = _int("ATRASO_DIGITACAO_MS", 25)
+ATRASO_DIGITACAO_MS = _int("ATRASO_DIGITACAO_MS", 15)
 # "Carregou" = frame principal completo e nenhuma request começando/terminando por este tempo.
 REDE_QUIETA_MS = _int("REDE_QUIETA_MS", 1000)
 # Depois do "completo", no máximo este tempo esperando a rede aquietar.

@@ -104,6 +104,17 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
   (`resultado: "nao_existia"`); senão o pedido falha. `frame` (opcional) limita a busca aos frames
   cuja URL contém esse texto. "Visível" é ter tamanho e não estar `display:none`/`visibility:hidden`.
   A opacidade não conta, porque caixas estilizadas deixam o `<input>` transparente por cima do desenho.
+  Opcionais do `clicar` (2026-09-26, para clicar assim que dá, sem tempo fixo):
+  - `frameCompleto: true` (exige `frame`): só clica depois que um frame cuja URL contém `frame`
+    terminou de carregar (`webNavigation.onCompleted`). É o sinal de "player pronto". Antes de
+    clicar, uma pausa de 0,2–0,6 s (a pessoa vê o botão e clica).
+  - `confirmarRede` (regex), `confirmarMs` (padrão 4000), `tentativas` (1–5, padrão 1): depois do
+    clique, espera uma request que case. Se nada vier, mede de novo e clica outra vez. **Se o site já
+    reagiu, nunca clica de novo** (clique repetido gasta o limite do site). O registro da ação ganha
+    `cliques` e `confirmado`; sem reação em nenhuma tentativa, `resultado: "sem_reacao"` (o pedido
+    segue, e o `esperarRede` decide).
+  - Com `esperarPagina: "nao"`, se o desafio da Cloudflare aparecer enquanto o `clicar` procura, ele
+    é tratado ali mesmo (ações `quando: "desafio"`) e a busca continua.
 - `quando` (opcional): `"carregada"` (padrão) roda depois que a página carregou. `"desafio"` roda
   **enquanto** a aba estiver no "Um momento…" / "Just a moment...", uma vez por aparição. **É assim
   que o desafio da Cloudflare é resolvido: quem pede manda o clique na caixa do Turnstile** (decisão
@@ -111,6 +122,9 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
   `<input type="checkbox" aria-label="Confirme que é humano">`, num shadow root fechado dentro do
   iframe de `challenges.cloudflare.com`. Depois de passar, o cookie `cf_clearance` fica no perfil e
   os pedidos seguintes nem veem o desafio.
+- `esperarPagina` (opcional): quando as ações `carregada` começam. `"quieta"` (padrão): frame
+  principal completo e rede quieta por 1 s (no máximo 8 s extras). `"completa"`: só o frame principal
+  completo. `"nao"`: logo que o documento chega (o `clicar` espera o que precisar).
 - `inspecionar` (opcional, para depuração): um seletor. A resposta ganha `inspecao` com a medição
   crua de todos os frames no fim do pedido (URLs dos frames, iframes, os primeiros `input`/`button`
   de cada frame e o alvo). Serve para descobrir seletores.
@@ -137,7 +151,7 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
   "urlFinal": "...", "titulo": "...", "html": "<!DOCTYPE html>...",
   "rede": [{ "url": "...", "metodo": "GET", "status": 200, "tipo": "xmlhttprequest", "horario": 0, "aba": 12 }],
   "acoes": [{ "tipo": "clicar", "quando": "carregada", "seletor": "#play",
-              "resultado": "clicou | nao_existia | nao_precisou | esperou", "ms": 812 }],
+              "resultado": "clicou | nao_existia | nao_precisou | sem_reacao | esperou", "ms": 812 }],
   "desafio": false,
   "erros": [],
   "duracaoMs": 5230,
@@ -156,6 +170,7 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
   `ok: false`.
 - `etapas.navegar` inclui a espera pela resposta do servidor. Um site lento aparece aqui.
 - `nao_precisou`: ação de desafio cujo desafio sumiu antes de o elemento aparecer.
+- `sem_reacao`: `clicar` com `confirmarRede` que clicou e o site não fez a request esperada.
 
 `GET /saude` (sem token): Chrome vivo, extensão conectada e versão, memória do Chrome, fila e tela em uso.
 `GET /v1/diagnostico` (com token): permissões efetivas da extensão e contadores de eventos.

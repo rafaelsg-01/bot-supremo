@@ -22,8 +22,24 @@ async def _xdo(*args):
     return saida.decode(errors="replace")
 
 
+_janela_guardada = None
+
+
 async def janela_chrome():
-    """ID X da janela principal do Chrome (a maior visível), ou None."""
+    """ID X da janela principal do Chrome (a maior visível), ou None.
+
+    Guarda o ID: procurar de novo custa vários processos do xdotool, e num HD lento isso já levou
+    segundos. Se a janela guardada sumiu (Chrome reaberto), procura de novo.
+    """
+    global _janela_guardada
+    if _janela_guardada:
+        try:
+            geo = await geometria(_janela_guardada)
+            if geo["WIDTH"] > 400 and geo["HEIGHT"] > 300:
+                return _janela_guardada
+        except ErroXdotool:
+            pass
+        _janela_guardada = None
     try:
         saida = await _xdo("search", "--onlyvisible", "--class", "google-chrome")
     except ErroXdotool:
@@ -37,6 +53,7 @@ async def janela_chrome():
         area = geo["WIDTH"] * geo["HEIGHT"]
         if area > maior_area:
             melhor, maior_area = janela, area
+    _janela_guardada = melhor
     return melhor
 
 
@@ -47,7 +64,14 @@ async def geometria(janela):
 
 
 async def focar(janela):
+    """Ativa a janela, se ela já não for a ativa. Devolve True se precisou ativar."""
+    try:
+        if (await _xdo("getactivewindow")).strip() == str(janela):
+            return False
+    except ErroXdotool:
+        pass  # nenhuma janela ativa
     await _xdo("windowactivate", "--sync", janela)
+    return True
 
 
 async def teclas(*sequencia):
