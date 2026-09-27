@@ -70,17 +70,18 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 
 ## Fase 7: vídeo mais rápido (próximo trabalho)
 
-Hoje um episódio fora do cache leva ~30–38 s. Medições, ideias e regras em
+Um episódio fora do cache levava ~30–38 s; agora leva ~15 s pela TV (2026-09-26). Medições, ideias e regras em
 [MANUAL.md, seção 11](MANUAL.md#11-tempo-para-achar-o-link-do-vídeo-para-quem-for-otimizar).
 
 - [x] Pedidos repetidos: 10 simultâneos e 12 espalhados no mesmo episódio = 1 visita ao site
 - [x] Linha do tempo por pedido (log `tempo ...`, `linhaDoTempo`, `marcarRede`) e medição (MANUAL seção 11)
-- [ ] Testar sem a espera fixa de 15 s (ou com 2–3 s) em alguns episódios, espaçados
-- [ ] Ações logo após o documento chegar, sem esperar a rede quieta (mudança de contrato)
-- [ ] `ATRASO_DIGITACAO_MS` menor
+- [x] Sem a espera fixa de 15 s: clica quando o player termina de carregar, com confirmação pelo site
+- [x] Ações logo após o documento chegar (`esperarPagina`, mudança de contrato)
+- [x] `ATRASO_DIGITACAO_MS` 25 → 15 e conferência do endereço digitado
 - [ ] ~~Buscar o próximo episódio em segundo plano~~: o dono descartou (2026-09-26)
-- [ ] Investigar o `focou` lento (0,5–4 s em 4 de 7 vídeos)
-- [ ] Registrar os tempos novos em "Descobertas" e atualizar a seção 11 do MANUAL
+- [x] `focou` lento: janela guardada e só ativada quando precisa (0,02 s)
+- [x] Registrar os tempos novos em "Descobertas" e atualizar a seção 11 do MANUAL
+- [ ] Observar alguns dias quantas vezes o iptv usa a reserva (`[bot-supremo] reserva:` no log)
 
 ---
 
@@ -123,3 +124,7 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-26 | Painel | `painel.iptv01.asia` no ar (login do dono, sessão de 10 anos). Testado pela internet: login, semáforo, dados, pausa (pedido esperou e terminou ao voltar), testar o site, reabrir o Chrome, reiniciar o bot, tela (websocket passando pela Cloudflare) e **reiniciar o notebook**: clique 19:29, notebook de volta 19:32, bot e painel no ar 19:37, sem ninguém mexer. |
 | 2026-09-26 | Repetidos | 10 cliques simultâneos no mesmo episódio pelo iptv: 1 visita ao site, os 10 com o mesmo link (46 s). 12 cliques, um a cada 8 s por 88 s: 1 visita. Os que chegaram até 2 s depois do fim já acharam no KV (o "não achei" em cache do KV não atrapalhou). |
 | 2026-09-26 | Tempo do vídeo | Linha do tempo em 7 vídeos: o player (`player3/server.php`) fica pronto em 7,6–15 s, mas o clique só sai em 28–36 s (página quieta + 15 s fixos). Clique → link: 2,1–6,1 s. `windowactivate` às vezes leva 0,5–4 s. Worker + túnel ~0,75 s. Detalhes na seção 11 do MANUAL. |
+| 2026-09-26 | Vídeo rápido | Clicando quando o iframe do player termina de carregar (sem os 15 s nem a página quieta): 10 de 10 vídeos com link (fora a tecla perdida), 1 clique cada (o site sempre reagiu na 1ª), `serverforms` 200, **12,0–14,4 s** (antes 31–41 s). O player aparece "completo" duas vezes, com ~1 s de diferença; clicar depois do 1º já funcionou. |
+| 2026-09-26 | Tecla perdida | Uma vez a digitação perdeu as duas primeiras letras (`tps://...`) e o Chrome buscou no Google; o pedido falhou esperando o `#submit`. Não se repetiu em outros 30 pedidos. Correção: o bot confere o endereço no início da navegação e digita de novo. |
+| 2026-09-26 | Série | `esperarPagina: completa` dá o mesmo HTML que `quieta` (4 séries, blocos idênticos) e sai em 2,2–2,8 s. |
+| 2026-09-26 | Ponta a ponta | iptv `af326e48` + bot `63523e0`: 4 episódios novos pelo `/get-list-link-mp4-rc` em 14,9–21 s (sem usar a reserva), `/proxy-rc` 206 `video/mp4`, 10 cliques simultâneos num episódio novo = 1 visita, 16 s. |

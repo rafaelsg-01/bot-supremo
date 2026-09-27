@@ -82,22 +82,27 @@ Arquivos: [servico/principal.py](../servico/principal.py) (API e fila) e
    Se quem pediu desconectar, o pedido **continua** até o fim (`asyncio.shield`) para a aba não ficar
    pela metade.
 5. **Preparar a aba** (`prepararAba` na extensão): uma aba só, em `about:blank`.
-6. **Navegar** (`_navegar`): foca a janela, `ctrl+L`, digita a URL, `Delete`, `Enter` (xdotool).
-   Confirma pelo **início** da navegação (evento `nav/inicio` ou request `main_frame`). Se em 10 s
-   nada começar, abre pela extensão como reserva e avisa em `erros`.
-7. **Carregar** (`_esperar_carregar`): frame principal completo e rede quieta por 1 s (no máximo 8 s
-   extras). Se o título for "Um momento…"/"Just a moment...", entra em `_tratar_desafio`: chama o
-   gancho vazio e roda as ações `quando: "desafio"` (clique no Turnstile).
+6. **Navegar** (`_navegar`): foca a janela (o ID fica guardado; só ativa se ela não for a ativa),
+   `ctrl+L`, digita a URL (15 ms por letra), `Delete`, `Enter` (xdotool). Confirma pelo **início** da
+   navegação (evento `nav/inicio` ou request `main_frame`) e **confere o endereço**: se começou em
+   outro (uma tecla perdida já virou busca no Google), digita de novo; na 2ª vez abre pela extensão.
+   Se em 10 s nada começar, também abre pela extensão. Os dois casos avisam em `erros`.
+7. **Carregar** (`_esperar_carregar`), conforme `esperarPagina`: `quieta` (padrão) = frame principal
+   completo e rede quieta por 1 s (no máximo 8 s extras); `completa` = só o frame completo; `nao` =
+   pula esta etapa. Se o título for "Um momento…"/"Just a moment...", entra em `_tratar_desafio`:
+   chama o gancho vazio e roda as ações `quando: "desafio"` (clique no Turnstile). Com `nao`, o
+   desafio é tratado de dentro do `clicar`.
 8. **Ações** `quando: "carregada"`, em ordem. `clicar` pede à extensão a medida do seletor em todos os
    frames (`localizar`), converte para pixel da tela (`_ponto_na_tela`), rola com a roda se
-   precisar, move o mouse em curva e clica.
+   precisar, move o mouse em curva e clica. Com `frameCompleto`, antes espera o iframe terminar de
+   carregar; com `confirmarRede`, depois espera o site reagir e só clica de novo se ele não reagiu.
 9. **esperarRede**: espera a primeira request que casar com a regex (inclui as do service worker,
    aba `-1`).
 10. **Ler o HTML** (`lerHtml`, mundo isolado) e montar a resposta.
 11. **Limpar**: fecha abas extras e volta a `about:blank`. Se o Chrome passou de 1100 MB, reabre.
 
-Tempos típicos no notebook: página comum 3–15 s, lista `.txt` 3–7 s, **vídeo 28–45 s** (inclui 15 s
-de espera de propósito antes do play).
+Tempos típicos no notebook: página de série 2–3 s, lista `.txt` 3–4 s, **vídeo 12–15 s** (Chrome
+recém-aberto: ~25 s no primeiro).
 
 ## 4. Como o iptv usa o bot
 
@@ -115,8 +120,8 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
 | Função | Pedido ao bot | Cache (KV) |
 |---|---|---|
 | `Function_getMovieList` / `Function_getSerieList` | `url` = `/final_mapafilmes.txt` / `/final_mapa.txt` | listas cruas `movies_list_rc` / `series_list_rc`, renovadas em segundo plano depois de 12 h. Lista vazia (falha) **não** substitui a boa |
-| `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
-| `Function_getLinkMp4List` | episódio/filme + esperar 15 s + clicar `#submit` no frame `player3/server.php` + `esperarRede` com a URL do vídeo | `mp4-list-<linkPage>`, **4 h fixas** (como o dono fez) |
+| `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html`, `esperarPagina: 'completa'`; sem temporadas, repete com `quieta` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
+| `Function_getLinkMp4List` | **rápido:** episódio/filme com `esperarPagina: 'nao'` + clicar `#submit` no frame `player3/server.php` com `frameCompleto` e `confirmarRede: player3/serverforms[.]api` (até 3 cliques) + `esperarRede` com a URL do vídeo. **Reserva** (só se o player não reagiu ao play): o pedido antigo, 15 s parado e depois o play | `mp4-list-<linkPage>`, **4 h fixas** (como o dono fez) |
 
 - **Sempre** use `Function_getLinkMp4ListComCache(env, linkPage, context)`, com o `context`. Ele usa
   `waitUntil`, que dá uns 30 s extras para gravar no KV depois que a TV desiste (depois disso a
@@ -205,6 +210,8 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | `/saude` → 502/`error code: 502` | container recriando (deploy, reboot) | esperar 1–2 min. O timer sobe tudo sozinho |
 | `/saude` com `extensao.conectada: false` | Chrome travado num aviso | o serviço reabre o Chrome sozinho em 2 min; olhe `/v1/tela` |
 | Vídeo volta `false`, log do bot com `nenhuma request casou` e o player chamando `serverforms.api` com 503/521 | limite do site estourado | parar de pedir vídeos novos por ~10 min. Os que estão no cache continuam tocando |
+| `[bot-supremo] reserva:` no `wrangler tail` | o pedido rápido não fez o player reagir e o iptv usou o pedido antigo | normal de vez em quando. Se for sempre, ver a linha `tempo` do bot (`frame_completo`, `clicou`, `sem_reacao`) |
+| `aviso: a digitação abriu ...` em `erros` | uma tecla se perdeu (ex.: alguém mexeu no teclado do notebook) | nada: o bot digita de novo sozinho. Se virar frequente, subir `ATRASO_DIGITACAO_MS` no `.env` |
 | `o seletor '#submit' não apareceu` | player demorou ou mudou | rodar um pedido com `inspecionar: "#submit"`, ver `/v1/tela`. Se o site mudou o player, ajustar as ações em `Function_getLinkMp4List` |
 | Todas as páginas com `statusHttp` 5xx (521/522) | site fora ou domínio mudou | abrir o site no PC. Se mudou de domínio, trocar `rcDominio` e fazer deploy do iptv |
 | `status: "desafio"` | o Turnstile não passou | ver `/v1/tela`. Se a caixa mudou, ajustar `Const_acaoDesafio` em `bot_supremo.ts` |
@@ -249,8 +256,8 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | 10 vídeos novos ao mesmo tempo pelo iptv (com a resposta em espaços) | 8 entregues, o último depois de 255 s na fila. Os 2 últimos: a Cloudflare fechou a conexão cliente→Worker em ~270 s, mas o bot terminou os dois |
 | Mesmo episódio pedido 5 min depois (cache de 4 h no KV) | 1ª vez 34,8 s; 2ª vez 0,27 s |
 
-Na prática: **um vídeo novo leva ~35 s**. Com vários vídeos novos pedidos juntos, cada um espera a sua
-vez (~35 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre na hora.
+Na prática (depois da Fase 7): **um vídeo novo leva ~15 s**. Com vários vídeos novos pedidos juntos,
+cada um espera a sua vez (~15 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre na hora.
 
 ## 10. Pendências
 
@@ -263,8 +270,8 @@ vez (~35 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre
 
 ## 11. Tempo para achar o link do vídeo (para quem for otimizar)
 
-Um episódio que **não** está no cache leva **~30–38 s** do clique na TV até o link. Depois fica 4 h
-no KV do iptv e sai em ~0,1 s. O dono quer diminuir esses ~35 s.
+Um episódio que **não** está no cache levava **~30–38 s** do clique na TV até o link; depois da
+Fase 7 leva **~15 s** (ver "Resultado" abaixo). Depois fica 4 h no KV do iptv e sai em ~0,1 s.
 
 ### Onde o tempo vai (medido em 2026-09-26, etapas da linha `pedido ... -> concluido em N ms ({...})`)
 
@@ -318,7 +325,28 @@ O pedido é montado em `Function_getLinkMp4List` (`../projeto-iptv/src/function_
 `esperar 15000` → `clicar #submit (frame player3/server.php, timeout 20 s)` → `esperarRede` com
 `[?&]url=https?://[^?&]+[.]mp4[?]` (timeout 45 s).
 
-### Ideias, da maior economia para a menor
+### Resultado da Fase 7 (2026-09-26)
+
+Em vez de esperar tempo fixo, o bot **olha a página e clica assim que o player está pronto** (o iframe
+`player3/server.php` terminou de carregar e o `#submit` está visível), e confere se o site reagiu
+(chamou o `serverforms.api`). Só clica de novo se o site **não** reagiu.
+
+| | Antes | Depois |
+|---|---|---|
+| Vídeo novo (bot) | 31–41 s | **12,0–14,4 s** (10 de 10 com link, fora a tecla perdida abaixo; 1 clique cada, `serverforms` sempre 200); 18 s com o site lento; ~25 s no 1º pedido depois de abrir o Chrome |
+| Página de série | 4,2–6,1 s | **2,2–2,8 s** (`completa`; o HTML é o mesmo byte a byte que com `quieta`) |
+| Ativar a janela | 0,07–4 s | ~0,02 s |
+| Vídeo novo pela TV/iptv (ponta a ponta) | 32–41 s | **14,9–21 s** (4 episódios; a reserva não foi usada) |
+| 10 cliques simultâneos num episódio novo | 1 visita, 46 s | 1 visita, **16 s** para os 10 |
+
+Onde vai o tempo agora (vídeo típico, ms): `commit` 1,5–2,7 s → iframe do player completo 6,3–10 s →
+clique +1,1–1,3 s (pausa de reação + mouse) → `serverforms` +0,1 s → link +2,1 s. O que sobra é o
+site: carregar o player e, depois do play, os scripts dele.
+
+Achado no caminho: numa das tentativas **duas letras da URL se perderam** e o Chrome fez uma busca no
+Google. Agora o bot confere o endereço no início da navegação e digita de novo (ver seção 3).
+
+### Ideias (histórico, antes da Fase 7)
 
 1. **Tirar ou encurtar a espera fixa de 15 s** (até −15 s). Ela entrou enquanto eu investigava os
    503 do `serverforms.api`, com a suspeita de que um clique rápido demais parecesse robô. A causa
