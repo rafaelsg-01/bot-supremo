@@ -1,7 +1,7 @@
 #!/bin/bash
 # Mantém o bot-supremo no ar no notebook. Roda como root a cada 2 min (bot-supremo-atualizar.timer).
 #
-# Recria o container quando:
+# Recria o bot-supremo e o bot-supremo-video quando:
 #   - saiu imagem nova no GHCR (deploy automático);
 #   - o container "warp" foi recriado (acontece em todo boot, pelo ~/start.sh). Como usamos a
 #     rede dele (network_mode container:warp), o nosso container fica sem rede até ser recriado;
@@ -13,7 +13,8 @@
 
 principal() {
     set -u
-    local dir dono arquivos modo_dev id_warp img_antes img_depois rede rodando
+    local dir dono arquivos modo_dev id_warp img_depois servico container rede rodando motivo
+    declare -A img_antes
     dir="$(cd "$(dirname "$0")/.." && pwd)"
     cd "$dir" || exit 1
     dono="$(stat -c %U "$dir")"
@@ -31,14 +32,18 @@ principal() {
     fi
 
     [ -f .env ] || { echo "falta o .env em $dir"; exit 1; }
-    mkdir -p dados/perfil dados/estado
+    mkdir -p dados/perfil dados/estado dados/video
     chown "$dono": dados dados/perfil
+    # O serviço de vídeo roda como o usuário 1000 da imagem e grava o cache aqui.
+    chown 1000:1000 dados/video
 
     id_warp="$(docker inspect -f '{{.Id}}' warp 2>/dev/null)" || { echo "container warp não existe; esperando"; exit 0; }
     [ "$(docker inspect -f '{{.State.Running}}' warp)" = "true" ] || { echo "warp parado; esperando"; exit 0; }
 
     # Os dois IDs no mesmo formato (sha256:...): o da imagem que o container usa e o da tag após o pull.
-    img_antes="$(docker inspect -f '{{.Image}}' bot-supremo 2>/dev/null)"
+    for container in bot-supremo bot-supremo-video; do
+        img_antes[$container]="$(docker inspect -f '{{.Image}}' "$container" 2>/dev/null)"
+    done
     if [ "$modo_dev" = 0 ]; then
         sudo -u "$dono" git pull --ff-only -q || echo "aviso: git pull falhou"
         docker compose "${arquivos[@]}" pull -q || echo "aviso: pull das imagens falhou"
@@ -51,17 +56,22 @@ principal() {
     fi
     img_depois="$(docker image inspect -f '{{.Id}}' "$(docker compose "${arquivos[@]}" config --images | grep bot-supremo | head -n1)" 2>/dev/null)"
 
-    rede="$(docker inspect -f '{{.HostConfig.NetworkMode}}' bot-supremo 2>/dev/null)"
-    rodando="$(docker inspect -f '{{.State.Running}}' bot-supremo 2>/dev/null)"
+    # Os dois usam a rede do warp (network_mode container:warp): mesmas regras para os dois.
+    for servico in bot video; do
+        container="bot-supremo"
+        [ "$servico" = video ] && container="bot-supremo-video"
+        rede="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$container" 2>/dev/null)"
+        rodando="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)"
 
-    motivo=""
-    [ "$rodando" = "true" ] || motivo="container não está rodando"
-    [ -z "$motivo" ] && [ "$rede" != "container:$id_warp" ] && motivo="o warp foi recriado"
-    [ -z "$motivo" ] && [ -n "$img_antes" ] && [ "$img_antes" != "$img_depois" ] && motivo="imagem nova"
-    [ -z "$motivo" ] && return 0
+        motivo=""
+        [ "$rodando" = "true" ] || motivo="container não está rodando"
+        [ -z "$motivo" ] && [ "$rede" != "container:$id_warp" ] && motivo="o warp foi recriado"
+        [ -z "$motivo" ] && [ -n "${img_antes[$container]}" ] && [ "${img_antes[$container]}" != "$img_depois" ] && motivo="imagem nova"
+        [ -z "$motivo" ] && continue
 
-    echo "recriando o bot-supremo: $motivo"
-    docker compose "${arquivos[@]}" up -d --force-recreate bot
+        echo "recriando o $container: $motivo"
+        docker compose "${arquivos[@]}" up -d --force-recreate "$servico"
+    done
     docker image prune -f >/dev/null
 }
 

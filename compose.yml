@@ -35,6 +35,31 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Serviço de vídeo (video.iptv01.asia): cache do link mp4 e repasse do vídeo. O site prende o link
+  # ao IP de quem o gerou, então o vídeo tem que sair daqui, pelo mesmo WARP do Chrome.
+  # Container à parte (mesma imagem): se o Chrome travar ou reiniciar, os vídeos continuam.
+  # Fica em warp:8070. O cache (SQLite, sem prazo) mora em dados/video.
+  video:
+    image: ghcr.io/rafaelsg-01/bot-supremo:latest
+    container_name: bot-supremo-video
+    network_mode: "container:warp"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+    user: "1000:1000"
+    working_dir: /opt/bot-supremo
+    entrypoint: ["python3", "-m", "video.app"]
+    volumes:
+      - ./dados/video:/dados
+    mem_limit: 256m
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Painel de monitoramento (painel.iptv01.asia), com login. Mesma imagem do bot, outro comando.
   # Fica fora da rede do warp de propósito: se o bot ou o warp caírem, o painel continua de pé.
   # O socket do Docker é para ver os containers, ler o log e reiniciar (só ações fixas).
@@ -59,7 +84,8 @@ services:
         max-file: "2"
 
   # Túnel próprio da Cloudflare, com os endereços em implantacao/tunel.yml:
-  # bot.iptv01.asia -> http://warp:8080 (a API) e painel.iptv01.asia -> http://bot-supremo-painel:8090.
+  # bot.iptv01.asia -> http://warp:8080 (a API), video.iptv01.asia -> http://warp:8070 e
+  # painel.iptv01.asia -> http://bot-supremo-painel:8090.
   # A credencial fica em dados/tunel/credenciais.json e o ID do túnel no .env (TUNEL_ID).
   tunel:
     image: cloudflare/cloudflared:latest

@@ -1,0 +1,271 @@
+"""Serviço de vídeo do bot-supremo (video.iptv01.asia).
+
+O site prende o link do vídeo ao IP de quem o gerou (o WARP do notebook). Então o vídeo tem que
+ser baixado daqui, e este serviço faz duas coisas:
+
+- POST /v1/mp4 (Bearer VIDEO_TOKEN): link do vídeo de uma página. Vem do cache (SQLite, sem
+  prazo) depois de testado; se o teste falhar, o link é apagado e o bot busca um novo na hora.
+- GET/HEAD /proxy-rc?url=&pagina=&sig=: repassa o vídeo do site para quem pediu (TV, PC). Aceita
+  qualquer URL assinada pelo iptv (HMAC com o VIDEO_TOKEN). Se o link morrer e vier a página,
+  busca um link novo e continua.
+
+Roda num container à parte (mesma imagem do bot, rede do warp). Uso: python3 -m video.app
+"""
+import asyncio
+import collections
+import hashlib
+import hmac
+import json
+import logging
+import os
+import time
+
+import aiohttp
+from aiohttp import web
+
+from .busca import Busca, ErroBusca
+from .cache import Cache
+from .origem import ErroOrigem, Origem
+
+log = logging.getLogger("video")
+
+PORTA = int(os.environ.get("PORTA_VIDEO", 8070))
+TOKEN = os.environ.get("VIDEO_TOKEN", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+URL_BOT = os.environ.get("VIDEO_URL_BOT", "http://127.0.0.1:8080")
+ARQ_CACHE = os.environ.get("VIDEO_CACHE", "/dados/cache.sqlite")
+MAX_STREAMS = int(os.environ.get("VIDEO_MAX_STREAMS", 16))
+# Domínio do site até o iptv mandar o atual (o último visto fica guardado no cache).
+RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
+INTERVALO_MANTER_VIVA_S = 20
+BLOCO = 256 * 1024
+
+# Headers da origem que seguem para quem pediu o vídeo.
+REPASSAR = ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified")
+
+
+def assinatura(url, pagina):
+    """A mesma conta do iptv (function_rc.ts, urlVideoRc)."""
+    return hmac.new(TOKEN.encode(), f"{url}\n{pagina}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+class Servico:
+    def __init__(self):
+        self.origem = Origem()
+        self.cache = Cache(ARQ_CACHE)
+        self.busca = Busca(URL_BOT, BOT_TOKEN)
+        self.em_andamento = {}  # pagina -> tarefa (um pedido por página ao mesmo tempo)
+        self.historico = collections.deque(maxlen=20)
+        self.streams = 0
+        self.bytes_total = 0
+        self.ip = None
+        self.ip_desde = None
+
+    # --- link do vídeo ------------------------------------------------------
+
+    def obter(self, pagina, url_pagina):
+        """Tarefa compartilhada: pedidos iguais ao mesmo tempo esperam a mesma busca. A tarefa segue
+        até o fim mesmo se quem pediu desistir, para o link novo ficar no cache."""
+        tarefa = self.em_andamento.get(pagina)
+        if tarefa is None:
+            tarefa = asyncio.create_task(self._obter(pagina, url_pagina))
+            self.em_andamento[pagina] = tarefa
+            tarefa.add_done_callback(lambda _t: self.em_andamento.pop(pagina, None))
+        return tarefa
+
+    async def _obter(self, pagina, url_pagina):
+        inicio = time.monotonic()
+        ms = lambda: round((time.monotonic() - inicio) * 1000)  # noqa: E731
+        if url_pagina:
+            await self.cache.definir_meta("dominio", "/".join(url_pagina.split("/", 3)[:3]))
+        guardado = await self.cache.ler(pagina)
+        if guardado:
+            ok, status = await self.origem.testar(guardado["links"][0])
+            if ok:
+                await self.cache.marcar_ok(pagina)
+                return self._registrar(pagina, "cache", ms(), links=guardado["links"])
+            log.info("mp4 %s: link do cache morreu (%s); buscando outro", pagina, status)
+            await self.cache.apagar(pagina)
+            url_pagina = url_pagina or guardado.get("url")
+        if not url_pagina:
+            dominio = await self.cache.meta("dominio") or RC_DOMINIO
+            url_pagina = dominio.rstrip("/") + (pagina if pagina.startswith("/") else "/" + pagina)
+        try:
+            links = await self.busca.links(url_pagina)
+        except ErroBusca as e:
+            return self._registrar(pagina, "erro", ms(), erro=str(e))
+        ok, status = await self.origem.testar(links[0])
+        if not ok:
+            return self._registrar(pagina, "erro", ms(), erro=f"o link novo não entregou vídeo ({status})")
+        await self.cache.guardar(pagina, links, url_pagina)
+        return self._registrar(pagina, "novo", ms(), links=links)
+
+    def _registrar(self, pagina, origem, ms, links=None, erro=None):
+        if erro:
+            log.warning("mp4 %s -> erro em %d ms: %s", pagina, ms, erro)
+        else:
+            log.info("mp4 %s -> %s em %d ms", pagina, origem, ms)
+        self.historico.appendleft({"horario": time.strftime("%Y-%m-%d %H:%M:%S"), "pagina": pagina,
+                                   "origem": origem, "ms": ms, **({"erro": erro} if erro else {})})
+        if erro:
+            return {"ok": False, "origem": origem, "ms": ms, "erro": erro}
+        return {"ok": True, "links": links, "origem": origem, "ms": ms}
+
+    # --- rotas --------------------------------------------------------------
+
+    def _autorizado(self, request):
+        recebido = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        recebido = recebido or request.query.get("token", "").strip()
+        return bool(TOKEN) and hmac.compare_digest(recebido, TOKEN)
+
+    async def rota_mp4(self, request):
+        if not self._autorizado(request):
+            return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
+        try:
+            corpo = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return web.json_response({"ok": False, "erro": "corpo não é JSON"}, status=400)
+        pagina = str(corpo.get("pagina") or "").strip()
+        url_pagina = str(corpo.get("url") or "").strip()
+        if not pagina or not url_pagina.startswith(("http://", "https://")):
+            return web.json_response({"ok": False, "erro": "precisa de 'pagina' e 'url'"}, status=400)
+        tarefa = self.obter(pagina, url_pagina)
+        # Como no bot: o cabeçalho sai já e um espaço a cada 20 s evita o 524 da Cloudflare.
+        resposta = web.StreamResponse(headers={"Content-Type": "application/json; charset=utf-8"})
+        try:
+            await resposta.prepare(request)
+            while True:
+                try:
+                    resultado = await asyncio.wait_for(asyncio.shield(tarefa), INTERVALO_MANTER_VIVA_S)
+                    break
+                except TimeoutError:
+                    await resposta.write(b" ")
+            await resposta.write(json.dumps(resultado).encode())
+            await resposta.write_eof()
+        except (ConnectionResetError, aiohttp.ClientConnectionResetError):
+            log.info("quem pediu o mp4 desconectou antes do fim: %s (a busca continua)", pagina)
+        return resposta
+
+    async def rota_proxy(self, request):
+        url = request.query.get("url", "")
+        pagina = request.query.get("pagina", "")
+        if not TOKEN or not hmac.compare_digest(request.query.get("sig", ""), assinatura(url, pagina)):
+            return web.Response(status=403, text="assinatura inválida")
+        if not url.startswith(("https://", "http://")):
+            return web.Response(status=400, text="url inválida")
+        if self.streams >= MAX_STREAMS:
+            return web.Response(status=503, text="muitos vídeos ao mesmo tempo", headers={"Retry-After": "10"})
+
+        extra = {k: request.headers[k] for k in ("Range", "If-Range") if k in request.headers}
+        self.streams += 1
+        inicio = time.monotonic()
+        enviados = 0
+        origem_resp = None
+        resposta = None
+        try:
+            origem_resp = await self.origem.abrir(url, extra)
+            if origem_resp.status in (403, 404, 410) and pagina:
+                # Link morreu (IP do WARP mudou, assinatura velha): pega outro e tenta uma vez.
+                log.info("stream %s: origem %d; buscando link novo", pagina, origem_resp.status)
+                origem_resp.release()
+                origem_resp = None
+                resultado = await asyncio.shield(self.obter(pagina, ""))
+                if not resultado["ok"]:
+                    return web.Response(status=502, text=f"sem link novo: {resultado['erro']}")
+                origem_resp = await self.origem.abrir(resultado["links"][0], extra)
+
+            resposta = web.StreamResponse(status=origem_resp.status)
+            for k in REPASSAR:
+                if k in origem_resp.headers:
+                    resposta.headers[k] = origem_resp.headers[k]
+            if origem_resp.status < 300:
+                resposta.headers["Content-Type"] = "video/mp4"
+                resposta.headers["Content-Disposition"] = "inline"
+            else:
+                resposta.headers["Content-Type"] = origem_resp.headers.get("Content-Type", "text/plain")
+            resposta.headers["Access-Control-Allow-Origin"] = "*"
+            resposta.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range"
+            resposta.headers["Cache-Control"] = "no-store"
+            await resposta.prepare(request)
+            if request.method != "HEAD":
+                async for bloco in origem_resp.content.iter_chunked(BLOCO):
+                    await resposta.write(bloco)
+                    enviados += len(bloco)
+                await resposta.write_eof()
+            return resposta
+        except (ConnectionResetError, aiohttp.ClientConnectionResetError):
+            # Quem assistia fechou ou pulou para outro ponto do vídeo: normal.
+            return resposta or web.Response(status=499)
+        except (aiohttp.ClientError, OSError, TimeoutError, ErroOrigem) as e:
+            log.warning("stream %s: falha na origem: %s", pagina or url[:80], e)
+            if resposta is not None and resposta.prepared:
+                return resposta  # os cabeçalhos já saíram: só resta encerrar
+            return web.Response(status=502, text=f"falha ao buscar o vídeo: {e}")
+        finally:
+            if origem_resp is not None:
+                origem_resp.close()
+            self.streams -= 1
+            self.bytes_total += enviados
+            if enviados > 1024 * 1024:
+                log.info("stream %s: %.1f MB em %.0f s", pagina or "-", enviados / 1048576, time.monotonic() - inicio)
+
+    async def rota_saude(self, request):
+        if not self._autorizado(request):
+            return web.json_response({"ok": True})
+        return web.json_response({
+            "ok": True,
+            "streams": self.streams,
+            "maxStreams": MAX_STREAMS,
+            "mbEnviados": round(self.bytes_total / 1048576),
+            "linksNoCache": await self.cache.total(),
+            "buscando": list(self.em_andamento),
+            "ipPublico": self.ip,
+            "ipDesde": self.ip_desde,
+            "ultimos": list(self.historico),
+        })
+
+    # --- IP público do WARP -------------------------------------------------
+
+    async def vigiar_ip(self):
+        """Anota o IP de saída do WARP. Se ele mudar, os links velhos morrem (e são refeitos)."""
+        self.ip = await self.cache.meta("ip")
+        self.ip_desde = await self.cache.meta("ip_desde")
+        while True:
+            try:
+                ip = await self.origem.ip_publico()
+                if ip and ip != self.ip:
+                    log.info("IP público do WARP: %s (antes: %s)", ip, self.ip)
+                    self.ip, self.ip_desde = ip, time.strftime("%Y-%m-%d %H:%M:%S")
+                    await self.cache.definir_meta("ip", ip)
+                    await self.cache.definir_meta("ip_desde", self.ip_desde)
+            except Exception:
+                log.exception("falha ao conferir o IP público")
+            await asyncio.sleep(600)
+
+
+def criar_app():
+    servico = Servico()
+    app = web.Application(client_max_size=64 * 1024)
+    app.router.add_post("/v1/mp4", servico.rota_mp4)
+    app.router.add_route("GET", "/proxy-rc", servico.rota_proxy)
+    app.router.add_route("HEAD", "/proxy-rc", servico.rota_proxy)
+    app.router.add_get("/saude", servico.rota_saude)
+
+    async def ao_iniciar(_app):
+        _app["vigia_ip"] = asyncio.create_task(servico.vigiar_ip())
+
+    async def ao_parar(_app):
+        _app["vigia_ip"].cancel()
+        await servico.origem.fechar()
+
+    app.on_startup.append(ao_iniciar)
+    app.on_cleanup.append(ao_parar)
+    return app
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S")
+    if not TOKEN:
+        log.warning("VIDEO_TOKEN vazio: o serviço vai recusar todos os pedidos")
+    web.run_app(criar_app(), port=PORTA, access_log=None, print=None)

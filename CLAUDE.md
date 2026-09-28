@@ -6,8 +6,8 @@ Depois leia:
   projeto-iptv), como diagnosticar, problemas conhecidos, deploy e rollback. **Comece por ele para
   consertar bugs.**
 - [docs/ROTEIRO.md](docs/ROTEIRO.md): o que falta fazer e o histórico do que foi descoberto.
-  **Próximo trabalho: Fase 7, deixar o link do vídeo mais rápido** (medições e ideias na seção 11
-  do MANUAL).
+  Fases 7 (vídeo em ~15 s) e 8 (vídeo passa pelo notebook, seção 12 do MANUAL) feitas. **Pendências:**
+  fim da Fase 8 e seção 10 do MANUAL.
 
 ## O que é
 
@@ -138,7 +138,8 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
 - `timeoutMs` geral: padrão 60000, máximo 240000.
 - Um pedido idêntico (mesmo corpo) a um que **ainda** está na fila ou rodando espera o resultado
   dele, em vez de rodar de novo. **O bot não guarda resultados depois que o pedido termina.** Decisão
-  do dono (2026-09-26): nada de cache no notebook. Cache é do lado de quem chama (o KV do iptv).
+  do dono (2026-09-26): o bot não tem cache. Cache é de quem chama (o KV do iptv; o link de vídeo, desde
+  2026-09-28, no serviço de vídeo do notebook, que testa antes de entregar).
 - **A resposta começa na hora** (cabeçalho 200) e recebe um espaço a cada 20 s até o JSON ficar
   pronto, porque a Cloudflare corta com 524 a resposta que não começa em ~120 s. Os erros 400, 401 e
   429 continuam saindo com o status certo, porque são decididos antes.
@@ -200,11 +201,12 @@ Botões: pausar/voltar, testar o site, reabrir o Chrome, reiniciar o bot e reini
 container privilegiado de vida curta com `nsenter ... systemctl reboot`). São só ações fixas, sem
 terminal livre. Após 5 senhas erradas, o IP fica bloqueado por 15 min.
 
-**Endereços públicos:** `https://bot.iptv01.asia` (a API) e `https://painel.iptv01.asia` (o painel), pelo túnel próprio `bot-supremo` (ID
+**Endereços públicos:** `https://bot.iptv01.asia` (a API), `https://video.iptv01.asia` (o serviço de vídeo)
+e `https://painel.iptv01.asia` (o painel), pelo túnel próprio `bot-supremo` (ID
 `a572a95f-5df3-4234-9373-9b4c71ff3eef`, criado com o `cert.pem` de `iptv01.asia` que fica no PC do
 dono em `~/.cloudflared/credencial_iptv01.asia/`). O conector é o serviço `tunel` do `compose.yml`, na
-rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot.` vai para `http://warp:8080`
-e `painel.` para `http://bot-supremo-painel:8090`. A credencial do túnel fica só no notebook, em
+rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot.` vai para `http://warp:8080`,
+`video.` para `http://warp:8070` e `painel.` para `http://bot-supremo-painel:8090`. A credencial do túnel fica só no notebook, em
 `dados/tunel/credenciais.json`.
 
 ## Peças
@@ -256,6 +258,17 @@ e `painel.` para `http://bot-supremo-painel:8090`. A credencial do túnel fica s
    `servico/gancho_desafio.py` e roda numa thread à parte. Se o desafio não sumir, a resposta vem
    com `status: "desafio"`. O dono decidiu que o desafio é resolvido **pelo próprio pedido**, com
    ações `"quando": "desafio"` (ver o contrato). O gancho continua vazio.
+
+5. **Serviço de vídeo** (`video/`, container `bot-supremo-video`, mesma imagem, rede do warp, porta 8070).
+   Existe porque, desde 2026-09-28, o site prende o link do vídeo ao IP de quem o gerou (`ip=` dentro
+   da assinatura): só o notebook consegue baixar. Ele:
+   - `POST /v1/mp4` (Bearer `VIDEO_TOKEN`): devolve o link do vídeo de uma página. **Guarda o link
+     num SQLite sem prazo e testa antes de cada entrega** (decisão do dono, 2026-09-28); se o link
+     morreu, apaga e pede um novo ao bot na hora. É o único cache no notebook: o bot continua sem cache;
+   - `GET /proxy-rc?url=&pagina=&sig=`: repassa o vídeo, pelo IPv6 do WARP, para a TV e o site.
+     Aceita qualquer URL assinada pelo iptv (HMAC com o `VIDEO_TOKEN`), sem lista de domínios;
+   - `GET /saude`: streams, cache, últimas buscas e o IP público do WARP.
+   Detalhes, medições e diagnóstico na seção 12 do MANUAL.
 
 ## Infraestrutura
 

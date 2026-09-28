@@ -40,6 +40,8 @@ COPY extensao /opt/bot-supremo/extensao
 COPY servico /opt/bot-supremo/servico
 # Painel de monitoramento: roda em outro container, com esta mesma imagem (compose.yml, serviço painel).
 COPY painel /opt/bot-supremo/painel
+# Serviço de vídeo (video.iptv01.asia): outro container, mesma imagem (compose.yml, serviço video).
+COPY video /opt/bot-supremo/video
 RUN chmod +x /opt/bot-supremo/docker/entrada.sh
 
 EXPOSE 8080

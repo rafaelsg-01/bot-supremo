@@ -32,6 +32,8 @@ SEGREDO = os.environ.get("PAINEL_SEGREDO", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 VNC_SENHA = os.environ.get("VNC_SENHA", "")
 URL_BOT = os.environ.get("PAINEL_URL_BOT", "http://warp:8080")
+URL_VIDEO = os.environ.get("PAINEL_URL_VIDEO", "http://warp:8070")
+VIDEO_TOKEN = os.environ.get("VIDEO_TOKEN", "")
 URL_VNC = os.environ.get("PAINEL_URL_VNC", "ws://warp:6080/websockify")
 RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
 IMAGEM = os.environ.get("PAINEL_IMAGEM", "ghcr.io/rafaelsg-01/bot-supremo:latest")
@@ -41,8 +43,9 @@ CONTAINER_BOT = "bot-supremo"
 # Containers que aparecem no painel, na ordem, com um nome que o dono entende.
 CONTAINERS = [
     ("bot-supremo", "Bot (Chrome + serviço)"),
+    ("bot-supremo-video", "Vídeo (link mp4 e repasse)"),
     ("warp", "WARP (saída para a internet)"),
-    ("bot-supremo-tunel", "Túnel (bot. e painel.iptv01.asia)"),
+    ("bot-supremo-tunel", "Túnel (bot., video. e painel.iptv01.asia)"),
     ("bot-supremo-painel", "Painel (esta página)"),
     ("content-proxy-web-01", "FlareSolverr antigo (sem uso)"),
     ("cloudflared-tunnel", "Outro túnel (serviços antigos)"),
@@ -173,6 +176,15 @@ async def _saude_bot(sessao):
         return {"semResposta": str(e) or type(e).__name__}
 
 
+async def _saude_video(sessao):
+    try:
+        async with sessao.get(URL_VIDEO + "/saude", timeout=aiohttp.ClientTimeout(total=5),
+                              headers={"Authorization": f"Bearer {VIDEO_TOKEN}"}) as r:
+            return await r.json()
+    except Exception as e:
+        return {"semResposta": str(e) or type(e).__name__}
+
+
 async def _memorias(nomes):
     if time.time() - cache_memoria["quando"] > 15:
         resultados = await asyncio.gather(*(docker.memoria_mb(n) for n in nomes), return_exceptions=True)
@@ -227,7 +239,7 @@ async def _iptv(sessao):
     return cache_iptv["dados"]
 
 
-def _alertas(notebook, bot, containers):
+def _alertas(notebook, bot, containers, video):
     """Frases simples do que está errado. Lista vazia = tudo funcionando."""
     a = []
     if "semResposta" in bot:
@@ -241,8 +253,10 @@ def _alertas(notebook, bot, containers):
             a.append("O uBlock Origin Lite não aparece instalado.")
         if (bot.get("memoriaChromeMb") or 0) > 1100:
             a.append("O Chrome está usando muita memória.")
+    if "semResposta" in video:
+        a.append("O serviço de vídeo não está respondendo: os filmes e episódios não tocam.")
     for c in containers.get("lista", []):
-        if c["nome"] in ("bot-supremo", "warp", "bot-supremo-tunel") and c["estado"] != "running":
+        if c["nome"] in ("bot-supremo", "bot-supremo-video", "warp", "bot-supremo-tunel") and c["estado"] != "running":
             a.append(f"O container \"{c['descricao']}\" está parado.")
     if "erro" in containers:
         a.append(containers["erro"])
@@ -257,13 +271,14 @@ def _alertas(notebook, bot, containers):
 
 async def api_estado(request):
     sessao = request.app["sessao"]
-    bot, containers, iptv = await asyncio.gather(_saude_bot(sessao), _containers(), _iptv(sessao))
+    bot, video, containers, iptv = await asyncio.gather(_saude_bot(sessao), _saude_video(sessao), _containers(), _iptv(sessao))
     notebook = _notebook()
     return web.json_response({
         "agora": time.time(),
-        "alertas": _alertas(notebook, bot, containers),
+        "alertas": _alertas(notebook, bot, containers, video),
         "notebook": notebook,
         "bot": bot,
+        "video": video,
         "containers": containers,
         "iptv": iptv,
     })

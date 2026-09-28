@@ -82,6 +82,10 @@
       <dl id="bot"></dl>
     </section>
     <section class="cartao">
+      <h2>Vídeo</h2>
+      <dl id="video"></dl>
+    </section>
+    <section class="cartao">
       <h2>Consertar</h2>
       <div class="botoes">
         <button id="btn-pausa" data-acao="pausar" data-confirma="Pausar o bot por até 30 min? Os pedidos da TV vão esperar na fila.">Pausar o bot</button>
@@ -200,6 +204,22 @@ async function atualizarEstado() {
       ['Pausa', pausa.ativa ? '<span class="aviso">pausado</span>' : 'não'],
       ['Tela', b.tela === 'xorg' ? 'GPU real (xorg)' : esc(b.tela)],
       ['Versão', esc(v.commit || '?') + (v.iniciadoEm ? ` · no ar há ${duracao(e.agora - Date.parse(v.iniciadoEm) / 1000)}` : '')],
+    ]);
+  }
+
+  const vd = e.video || {};
+  if (vd.semResposta) {
+    $('video').innerHTML = linhas([['Situação', `<span class="ruim">sem resposta</span>`], ['Detalhe', esc(vd.semResposta)]]);
+  } else {
+    const ult = (vd.ultimos || [])[0];
+    const NOMES_ORIGEM = { cache: 'do cache (testado)', novo: 'buscado agora', erro: 'erro' };
+    $('video').innerHTML = linhas([
+      ['Assistindo agora', `${vd.streams ?? '?'} de ${vd.maxStreams ?? '?'}`],
+      ['Links guardados', `${vd.linksNoCache ?? '?'}`],
+      ['Buscando', (vd.buscando || []).length ? esc(vd.buscando.join(', ')) : 'nada'],
+      ['Último link', ult ? `${esc(ult.horario.slice(11))} · ${ult.origem === 'erro' ? '<span class="ruim">erro</span>' : NOMES_ORIGEM[ult.origem]} · ${(ult.ms / 1000).toFixed(1)} s` : '—'],
+      ['Enviado', `${vd.mbEnviados ?? 0} MB desde que ligou`],
+      ['IP do WARP', vd.ipPublico ? `${esc(vd.ipPublico)}<div class="suave">desde ${esc(vd.ipDesde || '?')}</div>` : '—'],
     ]);
   }
 

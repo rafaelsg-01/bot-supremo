@@ -19,7 +19,8 @@ pelo bot-supremo. O FlareSolverr antigo (`content-proxy-web-01`) ainda está lig
 **https://painel.iptv01.asia**. O dono entra com usuário e senha (os valores ficam no `.env` do
 notebook e no `LINKS.txt` do PC dele). Uma página só, que se atualiza a cada 5 s:
 - **semáforo**: "Tudo funcionando" ou a lista do que está errado, em frases simples;
-- **notebook, bot e containers**;
+- **notebook, bot, vídeo e containers** (o cartão "Vídeo" mostra quantos estão assistindo, os links
+  guardados, a última busca e o IP público do WARP);
 - **últimos pedidos**, com os números do dia;
 - **log**;
 - **a tela do Chrome ao vivo, com mouse e teclado**, de qualquer lugar.
@@ -35,7 +36,9 @@ que o painel não mostra, acrescente no painel (`painel/app.py` e `painel/pagina
 ```
 TV / celular
   └─> iptv01.asia  (Cloudflare Worker "iptv-self-2", repo ../projeto-iptv)
-        ├─ cache no KV (Kv_iptvSelf): listas, séries e links de vídeo
+        ├─ cache no KV (Kv_iptvSelf): listas e séries (links de vídeo NÃO: ficam no notebook)
+        ├─ POST https://video.iptv01.asia/v1/mp4     (Bearer videoRcToken) ─> container bot-supremo-video
+        │     (cache SQLite, testa o link antes de entregar; link novo = pede ao bot em 127.0.0.1:8080)
         └─ POST https://bot.iptv01.asia/v1/navegar   (Bearer botSupremoToken)
               └─> Cloudflare ─> túnel "bot-supremo" ─> container bot-supremo-tunel (cloudflared)
                     └─> http://warp:8080  (rede flare-net)
@@ -45,9 +48,11 @@ TV / celular
                                 └─> redecanais.press, saindo pela Cloudflare WARP
 ```
 
-Na hora de **tocar**, a TV recebe `https://iptv01.asia/proxy-rc?url=<link do vídeo>`. O `/proxy-rc` do
-Worker busca o vídeo no proxy do Rede Canais com os headers que ele exige. O bot não participa
-do streaming: ele só descobre o link.
+Na hora de **tocar**, a TV recebe `https://video.iptv01.asia/proxy-rc?url=<link>&pagina=<página>&sig=<assinatura>`
+e o vídeo **passa pelo notebook** (container `bot-supremo-video`, saindo pelo mesmo WARP do Chrome).
+Desde 2026-09-28 o site prende o link ao IP de quem o gerou, então só o notebook consegue baixar.
+O site (`static/script.js`) ainda monta `https://iptv01.asia/proxy-rc?url=...`: o Worker só assina e
+responde 302 para o `video.iptv01.asia`. Detalhes na seção 12.
 
 ## 2. Onde fica cada coisa
 
@@ -56,12 +61,15 @@ do streaming: ele só descobre o link.
 | Código do bot | este repo (público), `github.com/rafaelsg-01/bot-supremo`, branch `main` |
 | Imagem Docker | `ghcr.io/rafaelsg-01/bot-supremo:latest` (e `:<sha do commit>`), feita pelo GitHub Actions |
 | Notebook | `ssh servidor-caseiro`, repo clonado em `~/bot-supremo` |
-| Segredos do bot | `~/bot-supremo/.env` no notebook (`BOT_TOKEN`, `VNC_SENHA`, `TUNEL_ID`). Nunca no git |
+| Segredos do bot | `~/bot-supremo/.env` no notebook (`BOT_TOKEN`, `VIDEO_TOKEN`, `VNC_SENHA`, `TUNEL_ID`). Nunca no git |
+| Serviço de vídeo | pasta `video/`, container `bot-supremo-video` (mesma imagem), `warp:8070`, público em `video.iptv01.asia` |
+| Cache dos links de vídeo | `~/bot-supremo/dados/video/cache.sqlite` no notebook (sem prazo; pode apagar, só perde o cache) |
 | Credencial do túnel | `~/bot-supremo/dados/tunel/credenciais.json` no notebook |
 | Perfil do Chrome | `~/bot-supremo/dados/perfil` (cookies, `cf_clearance`, service worker do site) |
 | Chave da extensão | `~/bot-supremo/dados/estado` (se apagar, o ID da extensão muda e ela é reinstalada) |
 | Código do iptv | `../projeto-iptv` (Worker `iptv-self-2`, deploy com `npx wrangler deploy --env production`) |
 | Token do bot no iptv | secret `botSupremoToken` do Worker; para `npm run dev`, em `.dev.vars` (fora do git) |
+| Token do vídeo no iptv | secret `videoRcToken` do Worker = `VIDEO_TOKEN` do notebook (os dois têm que ser iguais) |
 | Domínio do site | `rcDominio` no `wrangler.toml` do iptv (todos os envs). Trocar o domínio = mudar só isso |
 
 ## 3. A vida de um pedido no bot
@@ -121,20 +129,19 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
 |---|---|---|
 | `Function_getMovieList` / `Function_getSerieList` | `url` = `/final_mapafilmes.txt` / `/final_mapa.txt` | listas cruas `movies_list_rc` / `series_list_rc`, renovadas em segundo plano depois de 12 h. Lista vazia (falha) **não** substitui a boa |
 | `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html`, `esperarPagina: 'completa'`; sem temporadas, repete com `quieta` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
-| `Function_getLinkMp4List` | **rápido:** episódio/filme com `esperarPagina: 'nao'` + clicar `#submit` no frame `player3/server.php` com `frameCompleto` e `confirmarRede: player3/serverforms[.]api` (até 3 cliques) + `esperarRede` com a URL do vídeo. **Reserva** (só se o player não reagiu ao play): o pedido antigo, 15 s parado e depois o play | `mp4-list-<linkPage>`, **4 h fixas** (como o dono fez) |
+| `Function_getLinkMp4ListComCache` | não fala com o bot: chama `POST video.iptv01.asia/v1/mp4 {pagina, url}`. Quem pede ao bot é o serviço de vídeo do notebook (`video/busca.py`), com o pedido **rápido** (`esperarPagina: 'nao'` + clicar `#submit` no frame `player3/server.php` com `frameCompleto` e `confirmarRede: player3/serverforms[.]api`, até 3 cliques, + `esperarRede` com a URL do vídeo) e a **reserva** (só se o player não reagiu: 15 s parado e depois o play) | **no notebook** (SQLite, sem prazo, testado a cada entrega). Nada no KV |
 
-- **Sempre** use `Function_getLinkMp4ListComCache(env, linkPage, context)`, com o `context`. Ele usa
-  `waitUntil`, que dá uns 30 s extras para gravar no KV depois que a TV desiste (depois disso a
-  Cloudflare encerra o Worker).
-- **O cache de vídeo é só este, no KV, com 4 h.** Não mexa no tempo sem falar com o dono. Em
-  2026-09-26 eu (IA) troquei por uma conta com o número `nu3zAQc9HC3GbwJq=<n>` achando que era a
-  validade do link. **É o horário de criação**: a conta dava negativa e nada era guardado, e o dono
-  percebeu na TV. Um link com 1h26 de vida ainda tocava.
-- **Nada de cache no notebook** (decisão do dono). O bot não guarda resultado de pedido.
-- O KV da Cloudflare pode continuar respondendo "não achei" por até 60 s depois de gravado (cache de
-  leitura negativa).
 - Os 4 lugares que pedem vídeo (`/get-list-link-mp4`, `/get-list-link-mp4-rc`, `src/tv/movie.ts`,
-  `src/tv/episode.ts`) usam a mesma chave de propósito.
+  `src/tv/episode.ts`) usam `Function_getLinkMp4ListComCache` e caem no mesmo cache do notebook (a
+  chave é a página, sem o domínio): quem abrir no celular deixa pronto para a TV.
+- A TV recebe as URLs de `urlsVideoRcTv` (já apontando para `video.iptv01.asia`, com a página, para o
+  notebook se recuperar se o link morrer). O site recebe a lista crua e passa pelo 302 do `/proxy-rc`.
+- **O cache do link de vídeo mora no notebook** (decisão do dono, 2026-09-28): sem prazo e **testado
+  antes de cada entrega** (1 byte do vídeo, ~0,2–0,7 s). Se o teste falhar, o link é apagado e o bot
+  busca outro na hora. Não existe mais `mp4-list-*` no KV (as chaves velhas só expiram).
+  Histórico: em 2026-09-26 eu (IA) confundi `nu3zAQc9HC3GbwJq=<n>` com a validade do link; **é o
+  horário de criação**. O teste antes de entregar acabou com a necessidade de adivinhar validade.
+- O bot continua sem cache: ele não guarda resultado de pedido.
 - **Cuidado:** o HTML, o CSS e o JS **do cliente** `/tv` rodam num navegador de TV muito antigo, e
   uma vírgula quebra tudo. Tudo acima é código do servidor (Worker). Não mexa no cliente `/tv` sem
   necessidade e sem testar na TV.
@@ -154,14 +161,20 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
   `player3/serverforms.api` e depois baixa o vídeo pelo proxy do site:
   `https://<host>.null-null.shop/…/proxy?container=videos&refresh=…&url=https://<host>/V/<servidor>/videos/<ID>.mp4?sv=…&nu3zAQc9HC3GbwJq=<horário de criação, epoch>-<assinatura>`.
   A regex usada no iptv é `[?&]url=https?://[^?&]+[.]mp4[?]`.
-- O proxy exige os headers `h31ffadrg3bb7: h31ffadrg3fj345a` e `x-requested-with: RC-Site-Requests`
-  (o `/proxy-rc` já manda). O mp4 de dentro recusa conexão direta (520).
+- **O link do vídeo é preso ao IP de quem o gerou** (desde ~22h40 de 2026-09-27): vem com
+  `ip=<IPv6 do WARP>` dentro da assinatura. Só esse IP recebe o vídeo; outro IP, o IPv4 do mesmo WARP
+  ou o `ip=` trocado dão `404 Not Found`. Por isso o vídeo passa pelo notebook, e **pelo IPv6** (o DNS
+  do WARP não devolve o IPv6 desses hosts; o serviço usa DNS por HTTPS). Os headers antigos
+  (`h31ffadrg3bb7`, `x-requested-with`) deixaram de ser conferidos, mas o serviço ainda manda.
+  O mp4 de dentro recusa conexão direta (520).
+- O host do proxy (`-_kerberos-...null-null.shop`) tem um nome que o `ssl` do Python recusa, embora o
+  certificado `*.null-null.shop` seja válido: o serviço confere o nome à mão (`video/origem.py`).
 - **Limite do `serverforms.api`, por IP e tempo.** Em 2026-09-26, **11 vídeos seguidos** (um a cada
   ~35 s) passaram sem problema. O que estoura o limite são **tentativas repetidas em rajada**: cada
   play que falha faz o player tentar 4 vezes, e cliques repetidos acumulam. Quando estoura, o site
   responde 503/521 **até para cliques feitos à mão**, e volta sozinho depois de ~10 min parado.
-- `wrangler dev` (local) não consegue buscar o host estranho do proxy de vídeo ("internal error").
-  Em produção funciona. Teste o `/proxy-rc` em produção.
+- Para depurar o que o player manda e recebe: pedido ao bot com `"cabecalhos": true` (headers de
+  cada request de `rede`).
 
 ## 6. Diagnóstico: por onde começar
 
@@ -221,6 +234,11 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | Lista com acentos quebrados (`NÃºmeros`) | `textoDoPre` não desfez a codificação | conferir o `<pre>` cru que o bot devolve |
 | Depois de reboot, bot sem rede | o `warp` foi recriado pelo `~/start.sh` | o `atualizar.sh` recria o nosso container em até 2 min |
 | IP do WARP banido (403 em tudo) | ban | refazer o registro do WARP (ver CLAUDE.md, com backup de `~/content-warp/data/`) |
+| Vídeo não abre, `/proxy-rc` 404 | link preso a outro IP (o IP do WARP mudou) | nada: o serviço testa antes de entregar e busca outro. Na TV, a URL leva a página e se recupera sozinha |
+| Vídeo não abre, `video.iptv01.asia` 403 "assinatura inválida" | `videoRcToken` do Worker diferente do `VIDEO_TOKEN` do notebook | acertar o secret (`wrangler secret put videoRcToken --env production`) |
+| Vídeo não abre, painel "serviço de vídeo não está respondendo" | container `bot-supremo-video` caído ou sem rede (warp recriado) | o `atualizar.sh` recria em até 2 min; `docker logs bot-supremo-video` |
+| Vídeo travando / carregando devagar | túnel preso em conexões ruins (em 2026-09-28 ficou em ~7 Mbit/s por um tempo) | `docker restart bot-supremo-tunel` (normal: 80–100 Mbit/s). Medir: `curl -r 0-15728639 -w "%{speed_download}"` numa URL do vídeo |
+| 503 "muitos vídeos ao mesmo tempo" | mais de `VIDEO_MAX_STREAMS` (16) conexões de vídeo | subir no `.env` se a CPU aguentar (seção 12) |
 
 ## 8. Como mudar e publicar
 
@@ -254,10 +272,12 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | 10 vídeos novos ao mesmo tempo pelo iptv (antes da correção) | 3 OK; os outros 7 com 524 no Worker, mas o bot terminou todos |
 | 11 vídeos seguidos no site | todos capturaram o link (28–44 s cada), sem bater no limite |
 | 10 vídeos novos ao mesmo tempo pelo iptv (com a resposta em espaços) | 8 entregues, o último depois de 255 s na fila. Os 2 últimos: a Cloudflare fechou a conexão cliente→Worker em ~270 s, mas o bot terminou os dois |
-| Mesmo episódio pedido 5 min depois (cache de 4 h no KV) | 1ª vez 34,8 s; 2ª vez 0,27 s |
+| Mesmo episódio pedido 5 min depois (cache de 4 h no KV, antes de 2026-09-28) | 1ª vez 34,8 s; 2ª vez 0,27 s |
+| Mesmo episódio pelo iptv com o cache no notebook (2026-09-28) | 1ª vez 17,7 s; 2ª vez 0,48 s (com o teste do link) |
 
 Na prática (depois da Fase 7): **um vídeo novo leva ~15 s**. Com vários vídeos novos pedidos juntos,
-cada um espera a sua vez (~15 s por vídeo à frente). Depois de achado, o link fica 4 h no KV e abre na hora.
+cada um espera a sua vez (~15 s por vídeo à frente). Depois de achado, o link fica no cache do notebook
+e abre em menos de 1 s (testado antes de entregar).
 
 ## 10. Pendências
 
@@ -372,8 +392,8 @@ Google. Agora o bot confere o endereço no início da navegação e digita de no
   `serverforms.api` por fora nem "adivinhar" a URL do vídeo.
 - **O limite do site**: teste com poucos episódios, espaçados. Rajadas de falhas (cada play que falha
   faz o player tentar 4x) bloqueiam o IP por ~10 min, até para a TV do dono.
-- **Nada de cache no notebook.** O cache de vídeo é o KV do iptv, com **4 h fixas**. Não mexer no tempo
-  sem perguntar (ver a seção 4 e o que deu errado em 2026-09-26).
+- **Cache só do link de vídeo, no notebook, testado a cada entrega** (decisão do dono, 2026-09-28).
+  O bot em si não guarda nada. Não inventar outros caches no notebook sem perguntar.
 - **Cliente `/tv` frágil**: a mudança fica no bot e no servidor do iptv, nunca no HTML/CSS/JS da TV.
 
 ### Como medir
@@ -385,11 +405,52 @@ Google. Agora o bot confere o endereço no início da navegação e digita de no
   `curl -s -A Mozilla/5.0 -w "%{time_total}s
 " "https://iptv01.asia/get-list-link-mp4-rc?linkPage=%2Fmusicvideo.php%3Fvid%3D<id>"`.
   Tem que devolver uma lista com o link (não `false`), e o link tem que tocar em `/proxy-rc` (206).
+  Para forçar busca nova de um episódio já guardado: apagar a linha dele no `cache.sqlite` do notebook.
 - **Achar episódios ainda não usados:**
   `https://iptv01.asia/get-list-serie-episode?linkPageSerie=/browse-avatar-a-lenda-de-aang-videos-1-date.html`
-  (61 episódios; os usados em teste ficam 4 h no cache).
-- **Testar o bot direto, sem o iptv e sem cache:** `POST /v1/navegar` com o mesmo corpo que o
-  `Function_getLinkMp4List` monta, mais a ação do desafio (ver `navegarBot` em `bot_supremo.ts`).
+  (61 episódios; os usados em teste ficam no cache do notebook).
+- **Testar o bot direto, sem o iptv e sem cache:** `POST /v1/navegar` com o mesmo corpo que
+  `video/busca.py` monta (`pedido_rapido`).
 - **Publicar:**
   - bot: push na `main` e esperar o painel mostrar o commit novo;
   - iptv: `npx tsc --noEmit -p .` e depois `npx wrangler deploy --env production`.
+
+## 12. Serviço de vídeo (`video.iptv01.asia`, container `bot-supremo-video`)
+
+**Por quê:** desde ~22h40 de 2026-09-27 o link do vídeo sai preso ao IP de quem o gerou. Só o notebook
+(o WARP do Chrome) consegue baixar. O serviço fica num container próprio (mesma imagem, rede do warp):
+se o Chrome travar ou reiniciar, quem está assistindo continua.
+
+**Rotas** (`video/app.py`):
+- `POST /v1/mp4` (Bearer `VIDEO_TOKEN`), `{"pagina": "/ep.html", "url": "https://<domínio>/ep.html"}` →
+  `{"ok", "links": [...], "origem": "cache" | "novo", "ms"}`. Um pedido por página ao mesmo tempo; a
+  busca termina e fica no cache mesmo se quem pediu desistir. A resposta começa na hora e recebe um
+  espaço a cada 20 s (como o bot).
+- `GET|HEAD /proxy-rc?url=&pagina=&sig=`: repassa o vídeo (com `Range`, sem guardar em disco).
+  `sig` = HMAC-SHA256(`VIDEO_TOKEN`, `url + "\n" + pagina`), 32 primeiros hex (`urlVideoRc` no iptv).
+  **Aceita qualquer URL assinada** (o domínio do site muda). Se a origem der 403/404/410 e houver
+  `pagina`, pega um link novo e continua.
+- `GET /saude` (Bearer ou `?token=`): streams, links guardados, buscas em andamento, últimas buscas,
+  IP público do WARP e desde quando (o log anota quando muda).
+
+**Cache** (`video/cache.py`): SQLite em `dados/video/cache.sqlite`, chave = página (sem domínio), sem
+prazo. A cada entrega testa o 1º link (1 byte). 200/206 = entrega; qualquer outra coisa = apaga e busca
+outro pelo bot.
+
+**Medições (2026-09-28):**
+- link novo pelo iptv: 17,7 s (29–36 s em outros; 104 s quando o pedido rápido falhou e foi a reserva);
+- link do cache, com o teste: 0,2–0,7 s no notebook, ~0,5 s pelo iptv;
+- repasse: primeiro byte em 0,1–0,3 s; ~80–100 Mbit/s pelo túnel;
+- CPU: o Celeron (2 núcleos, **sem AES-NI**) satura os 2 núcleos a ~230–250 Mbit/s de repasse. Um
+  vídeo usa ~2–3 Mbit/s, então a CPU aguenta dezenas; o limite de 16 conexões (`VIDEO_MAX_STREAMS`)
+  é folgado e protege o Chrome;
+- o upload da casa (~170 Mbit/s) não é o gargalo.
+
+**Diagnóstico:**
+```bash
+ssh servidor-caseiro 'docker logs --since 1h bot-supremo-video 2>&1 | tail -30'   # mp4 ... -> cache|novo|erro, stream ...
+ssh servidor-caseiro 'cd ~/bot-supremo; T=$(grep ^VIDEO_TOKEN= .env | cut -d= -f2-); curl -s -H "Authorization: Bearer $T" http://$(bash implantacao/ip-warp.sh):8070/saude'
+```
+
+**Voltar atrás:** o `/proxy-rc` antigo do Worker não funciona mais (o site recusa o IP da Cloudflare).
+Se o serviço de vídeo quebrar, conserte-o; não há caminho alternativo.

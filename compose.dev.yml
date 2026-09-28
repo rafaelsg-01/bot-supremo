@@ -7,3 +7,6 @@ services:
       - ./extensao:/opt/bot-supremo/extensao:ro
       - ./docker/entrada.sh:/opt/bot-supremo/docker/entrada.sh:ro
       - ./docker/xorg.conf:/etc/X11/bot-supremo.conf:ro
+  video:
+    volumes:
+      - ./video:/opt/bot-supremo/video:ro

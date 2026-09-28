@@ -4,6 +4,8 @@
 ingress:
   - hostname: bot.iptv01.asia
     service: http://warp:8080
+  - hostname: video.iptv01.asia
+    service: http://warp:8070
   - hostname: painel.iptv01.asia
     service: http://bot-supremo-painel:8090
   - service: http_status:404

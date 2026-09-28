@@ -85,6 +85,18 @@ Um episódio fora do cache levava ~30–38 s; agora leva ~15 s pela TV (2026-09-
 
 ---
 
+## Fase 8: vídeo preso ao IP (feita em 2026-09-28)
+
+- [x] Descobrir por que o `/proxy-rc` parou (link preso ao IP do WARP; ver "Descobertas").
+- [x] Serviço de vídeo no notebook (`video/`, container `bot-supremo-video`, `video.iptv01.asia`):
+      repasse do vídeo pelo WARP (IPv6, DoH, conferência do certificado à mão) e cache do link sem
+      prazo, testado a cada entrega.
+- [x] iptv: `Function_getLinkMp4ListComCache` chama o notebook; a TV recebe URLs assinadas do
+      `video.iptv01.asia`; o `/proxy-rc` do Worker virou 302. Cache `mp4-list-*` do KV aposentado.
+- [x] Painel: cartão "Vídeo" (streams, cache, última busca, IP do WARP).
+- [ ] Observar alguns dias: IP do WARP muda nos reboots? (o serviço anota no log e no painel)
+- [ ] Olhar a falha "a extensão não respondeu a 'localizar' em 15s" (fez 1 busca cair na reserva e levar 104 s).
+
 ## Descobertas e medições
 
 Registre aqui tudo que for descoberto: padrões de URL, tempos de carregamento, uso de RAM,
@@ -129,3 +141,6 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-26 | Série | `esperarPagina: completa` dá o mesmo HTML que `quieta` (4 séries, blocos idênticos) e sai em 2,2–2,8 s. |
 | 2026-09-26 | Ponta a ponta | iptv `af326e48` + bot `63523e0`: 4 episódios novos pelo `/get-list-link-mp4-rc` em 14,9–21 s (sem usar a reserva), `/proxy-rc` 206 `video/mp4`, 10 cliques simultâneos num episódio novo = 1 visita, 16 s. |
 | 2026-09-28 | Vídeo preso ao IP | Desde ~22h40 de 27/09 (BRT), o link do vídeo traz `ip=<IP de quem pediu>` (o IPv6 do WARP) dentro da assinatura. Só esse IP recebe o vídeo: do notebook pelo IPv6, 206 (até sem os headers `h31ffadrg3bb7`/`x-requested-with`); pelo IPv4 do mesmo WARP, de outro IP ou pelo Worker do `/proxy-rc`, 404 `Not Found`. Trocar ou tirar o `ip=` também dá 404. Não é header, TLS, preflight nem tempo (testado com os headers exatos do Chrome e com `curl_cffi` imitando o Chrome). O player também passou a carregar um `probe.png?_rc_probe=...` do host do proxy. Descoberto com a opção nova `cabecalhos: true`. |
+| 2026-09-28 | Serviço de vídeo | Link novo pelo iptv 17,7 s; do cache (com teste de 1 byte) 0,2–0,7 s. Repasse: 1º byte 0,1–0,3 s, ~80–100 Mbit/s pelo túnel. Celeron sem AES-NI satura os 2 núcleos a ~230–250 Mbit/s de repasse (um vídeo usa ~2–3 Mbit/s). Upload da casa ~170 Mbit/s. |
+| 2026-09-28 | Túnel lento | Por um tempo o túnel `bot-supremo` ficou em ~7 Mbit/s no total (QUIC ou http2), enquanto um túnel novo na mesma zona fazia ~85 Mbit/s. Depois de parar e subir o container de novo, voltou a 80–100 Mbit/s. Remédio: `docker restart bot-supremo-tunel`. |
+| 2026-09-28 | DNS e TLS do proxy | O DNS do WARP só devolve IPv4 para `-_kerberos-...null-null.shop` (e o IPv4 recebe 404); o IPv6 vem por DoH. O `ssl` do Python recusa o nome ("Hostname mismatch") com certificado válido `*.null-null.shop`: verificação da cadeia + nome conferido à mão. |
