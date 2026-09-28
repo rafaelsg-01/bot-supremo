@@ -58,6 +58,7 @@
   #tela-caixa iframe { width: 100%; aspect-ratio: 1366 / 768; border: 1px solid var(--borda); border-radius: 8px; background: #000; }
   pre { background: #0b1020; color: #d1d5db; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .secao { margin-bottom: 16px; }
+  .nivel { margin: 12px 0 2px; font-size: 13px; font-weight: 600; opacity: .8; }
 </style>
 </head>
 <body>
@@ -87,15 +88,31 @@
     </section>
     <section class="cartao">
       <h2>Consertar</h2>
+      <div class="nivel">1. Testar (não mexe em nada)</div>
       <div class="botoes">
-        <button id="btn-pausa" data-acao="pausar" data-confirma="Pausar o bot por até 30 min? Os pedidos da TV vão esperar na fila.">Pausar o bot</button>
-        <button data-acao="testar-site" data-confirma="">Testar o site agora</button>
+        <button data-acao="testar-video" data-confirma="">Testar o vídeo</button>
+        <button data-acao="testar-site" data-confirma="">Testar o site</button>
+      </div>
+      <div class="nivel">2. Reparo leve (segundos)</div>
+      <div class="botoes">
+        <button data-acao="reiniciar-tunel" data-confirma="Reiniciar o túnel? Os endereços ficam fora uns 10 s e quem estiver assistindo pode precisar dar play de novo.">Reiniciar o túnel</button>
+        <button data-acao="reiniciar-video" data-confirma="Reiniciar o serviço de vídeo? Quem estiver assistindo para e precisa dar play de novo. Leva uns 5 s.">Reiniciar o vídeo</button>
         <button data-acao="reabrir-chrome" data-confirma="Fechar e abrir o Chrome de novo? Leva uns 15 s.">Reabrir o Chrome</button>
+      </div>
+      <div class="nivel">3. Reparo médio (até 2 min)</div>
+      <div class="botoes">
         <button data-acao="reiniciar-bot" data-confirma="Reiniciar o bot inteiro (container)? Leva uns 30 s.">Reiniciar o bot</button>
+        <button data-acao="reiniciar-internet" data-confirma="Reiniciar a internet do iptv (WARP)? Bot e vídeo reiniciam junto. Tudo fica fora por 1 a 2 min.">Reiniciar a internet (WARP)</button>
+      </div>
+      <div class="nivel">4. Reparo forte (3 a 5 min)</div>
+      <div class="botoes">
         <button class="perigo" data-acao="reiniciar-notebook" data-confirma="Reiniciar o NOTEBOOK? Tudo fica fora do ar por 3 a 5 min." data-confirma2="Tem certeza? O notebook vai reiniciar agora.">Reiniciar o notebook</button>
       </div>
       <div id="mensagem" class="suave"></div>
-      <p class="suave">Ordem para tentar: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar o notebook.</p>
+      <p class="suave"><b>Vídeo não abre ou trava:</b> Testar o vídeo → Reiniciar o túnel → Reiniciar o vídeo → Reiniciar a internet → Reiniciar o notebook.</p>
+      <p class="suave"><b>Filme ou episódio novo não carrega:</b> Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar a internet → Reiniciar o notebook.</p>
+      <p class="suave">Depois de cada passo, espere o tempo dele e teste de novo. O painel se atualiza sozinho.</p>
+      <div class="botoes"><button id="btn-pausa" data-acao="pausar" data-confirma="Pausar o bot por até 30 min? Os pedidos da TV vão esperar na fila.">Pausar o bot (para mexer na tela)</button></div>
     </section>
   </div>
 
@@ -163,6 +180,11 @@ async function api(caminho, opcoes) {
   return r;
 }
 
+function pub(p) {
+  if (!p) return '—';
+  return p.ok ? `<span class="ok">respondendo</span> · ${p.ms} ms` : `<span class="ruim">fora</span> · ${esc(p.erro || '')}`;
+}
+
 async function atualizarEstado() {
   const e = await (await api('/api/estado')).json();
   const n = e.notebook, b = e.bot, pausa = b.pausa || {};
@@ -203,6 +225,7 @@ async function atualizarEstado() {
       ['Fila', b.fila.pedidos ? `${b.fila.pedidos} pedido(s)` : 'vazia'],
       ['Pausa', pausa.ativa ? '<span class="aviso">pausado</span>' : 'não'],
       ['Tela', b.tela === 'xorg' ? 'GPU real (xorg)' : esc(b.tela)],
+      ['Pela internet', pub(e.publico && e.publico.bot)],
       ['Versão', esc(v.commit || '?') + (v.iniciadoEm ? ` · no ar há ${duracao(e.agora - Date.parse(v.iniciadoEm) / 1000)}` : '')],
     ]);
   }
@@ -214,6 +237,7 @@ async function atualizarEstado() {
     const ult = (vd.ultimos || [])[0];
     const NOMES_ORIGEM = { cache: 'do cache (testado)', novo: 'buscado agora', erro: 'erro' };
     $('video').innerHTML = linhas([
+      ['Pela internet', pub(e.publico && e.publico.video)],
       ['Assistindo agora', `${vd.streams ?? '?'} de ${vd.maxStreams ?? '?'}`],
       ['Links guardados', `${vd.linksNoCache ?? '?'}`],
       ['Buscando', (vd.buscando || []).length ? esc(vd.buscando.join(', ')) : 'nada'],
@@ -271,7 +295,12 @@ document.querySelectorAll('button[data-acao]').forEach((botao) => botao.addEvent
   const msg = $('mensagem');
   botao.disabled = true;
   msg.className = 'suave';
-  msg.textContent = botao.dataset.acao === 'testar-site' ? 'Testando (pode esperar pedidos na fila)…' : 'Um momento…';
+  const ESPERA = {
+    'testar-site': 'Testando o site (pode esperar pedidos na fila)…',
+    'testar-video': 'Testando o vídeo (se o link tiver morrido, busca outro: até 1 min)…',
+    'reiniciar-internet': 'Reiniciando o WARP e esperando ele voltar (até 2 min)…',
+  };
+  msg.textContent = ESPERA[botao.dataset.acao] || 'Um momento…';
   try {
     const r = await (await api('/api/acao/' + botao.dataset.acao, { method: 'POST', headers: { 'X-Painel': '1' } })).json();
     msg.className = r.ok ? 'ok' : 'ruim';

@@ -53,6 +53,11 @@ class Cache:
     async def apagar(self, pagina):
         await self._em_thread("DELETE FROM mp4 WHERE pagina = ?", (pagina,))
 
+    async def mais_recente(self):
+        """Página usada por último (para o botão "Testar o vídeo" do painel)."""
+        linhas = await self._em_thread("SELECT pagina FROM mp4 ORDER BY COALESCE(ultimo_ok, criado) DESC LIMIT 1")
+        return linhas[0][0] if linhas else None
+
     async def total(self):
         return (await self._em_thread("SELECT COUNT(*) FROM mp4"))[0][0]
 

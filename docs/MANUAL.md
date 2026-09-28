@@ -10,7 +10,7 @@ como o sistema funciona de ponta a ponta, onde olhar quando algo quebra e como m
 - Este manual é o **como funciona e como consertar**. Atualize-o quando mudar algo que ele descreve.
 
 Estado em 2026-09-26: em produção. A TV e o site do iptv pegam listas, séries e vídeos do Rede Canais
-pelo bot-supremo. O FlareSolverr antigo (`content-proxy-web-01`) ainda está ligado, mas sem uso.
+pelo bot-supremo. O FlareSolverr antigo foi removido em 2026-09-28 (o notebook é só do iptv).
 
 ---
 
@@ -25,8 +25,27 @@ notebook e no `LINKS.txt` do PC dele). Uma página só, que se atualiza a cada 5
 - **log**;
 - **a tela do Chrome ao vivo, com mouse e teclado**, de qualquer lugar.
 
-Botões, na ordem de tentar: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar o
-notebook. "Pausar o bot" segura os pedidos (até 30 min) para mexer na tela sem conflito.
+Botões, por nível (a página mostra a ordem por sintoma). Todos testados pela internet em 2026-09-28:
+
+| Nível | Botão | O que faz | Tempo |
+|---|---|---|---|
+| Testar | Testar o vídeo | link do episódio usado por último (testa ou busca outro) + 4 MB baixados pela internet | 2–30 s |
+| Testar | Testar o site | o bot abre `/final_mapa.txt` | 2–10 s |
+| Leve | Reiniciar o túnel | `bot-supremo-tunel` (responde antes, porque o painel também passa por ele) | ~10 s |
+| Leve | Reiniciar o vídeo | `bot-supremo-video` (quem assiste precisa dar play de novo) | ~5 s |
+| Leve | Reabrir o Chrome | fecha e abre o Chrome do bot | ~15 s |
+| Médio | Reiniciar o bot | container `bot-supremo` | ~30 s |
+| Médio | Reiniciar a internet (WARP) | reinicia o `warp`, espera `healthy` e reinicia bot e vídeo. **Troca o IP do WARP** | ~1 min |
+| Forte | Reiniciar o notebook | `systemctl reboot` por um container privilegiado | 3–5 min |
+
+- Vídeo não abre ou trava: Testar o vídeo → Reiniciar o túnel → Reiniciar o vídeo → Reiniciar a
+  internet → Reiniciar o notebook.
+- Filme ou episódio novo não carrega: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar
+  a internet → Reiniciar o notebook.
+
+"Pausar o bot" segura os pedidos (até 30 min) para mexer na tela sem conflito. O semáforo também
+avisa quando `video.` ou `bot.iptv01.asia` não respondem pela internet (checado a cada 60 s) e quando a
+última busca de vídeo deu erro.
 
 Para a IA, os comandos das seções abaixo continuam valendo. O painel é para o dono. Se precisar de algo
 que o painel não mostra, acrescente no painel (`painel/app.py` e `painel/pagina.html`).
@@ -281,9 +300,7 @@ e abre em menos de 1 s (testado antes de entregar).
 
 ## 10. Pendências
 
-- Fase 6 do ROTEIRO: desligar o `content-proxy-web-01` (libera ~620 MB) e tirar os passos dele do
-  `~/start.sh`. **Avisar o dono antes.**
-- Avaliar o cron de reboot a cada 12 h.
+- Observar se o IP do WARP muda sozinho (sem reboot); o cartão Vídeo mostra desde quando é o atual.
 - Tirar do iptv o código antigo do FlareSolverr (`getReturnJsExecuted`, `getHtmlCriptografado`,
   `jsGetLinkMp4.js`, rotas `/diag/*`) quando o dono concordar.
 - Observar por alguns dias se aparece ban (403) ou falhas no `#submit`.

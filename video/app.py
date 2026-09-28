@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import time
+from urllib.parse import urlencode
 
 import aiohttp
 from aiohttp import web
@@ -35,6 +36,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 URL_BOT = os.environ.get("VIDEO_URL_BOT", "http://127.0.0.1:8080")
 ARQ_CACHE = os.environ.get("VIDEO_CACHE", "/dados/cache.sqlite")
 MAX_STREAMS = int(os.environ.get("VIDEO_MAX_STREAMS", 16))
+# Endereço público (túnel), para o teste do painel baixar o vídeo pela internet.
+URL_PUBLICA = os.environ.get("VIDEO_URL_PUBLICA", "https://video.iptv01.asia")
 # Domínio do site até o iptv mandar o atual (o último visto fica guardado no cache).
 RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
 INTERVALO_MANTER_VIVA_S = 20
@@ -209,6 +212,20 @@ class Servico:
             if enviados > 1024 * 1024:
                 log.info("stream %s: %.1f MB em %.0f s", pagina or "-", enviados / 1048576, time.monotonic() - inicio)
 
+    async def rota_teste(self, request):
+        """Para o botão "Testar o vídeo" do painel: o link do episódio usado por último (testado ou
+        buscado de novo) e a URL pública assinada, para o painel baixar um pedaço pela internet."""
+        if not self._autorizado(request):
+            return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
+        pagina = await self.cache.mais_recente()
+        if not pagina:
+            return web.json_response({"ok": False, "erro": "nenhum vídeo guardado ainda: abra um filme ou episódio na TV primeiro"})
+        resultado = await asyncio.shield(self.obter(pagina, ""))
+        if resultado["ok"]:
+            url = resultado["links"][0]
+            resultado["url"] = f"{URL_PUBLICA}/proxy-rc?" + urlencode({"url": url, "pagina": pagina, "sig": assinatura(url, pagina)})
+        return web.json_response({**resultado, "pagina": pagina})
+
     async def rota_saude(self, request):
         if not self._autorizado(request):
             return web.json_response({"ok": True})
@@ -250,6 +267,7 @@ def criar_app():
     app.router.add_route("GET", "/proxy-rc", servico.rota_proxy)
     app.router.add_route("HEAD", "/proxy-rc", servico.rota_proxy)
     app.router.add_get("/saude", servico.rota_saude)
+    app.router.add_post("/v1/teste", servico.rota_teste)
 
     async def ao_iniciar(_app):
         _app["vigia_ip"] = asyncio.create_task(servico.vigiar_ip())

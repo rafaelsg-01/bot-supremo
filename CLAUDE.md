@@ -277,10 +277,17 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
   com I/O), **sem nobreak**.
 - Debian 13 (trixie), só terminal, sem interface gráfica instalada.
 - Fica ligado 24h em cima do armário, com internet por cabo.
-- Dockers que já rodam lá (em setembro de 2026): `warp` (Cloudflare WARP como proxy SOCKS5, é a saída
-  para a internet), `content-proxy-web-01` (o FlareSolverr antigo, a desligar quando este estiver no
-  ar) e dois `cloudflared` (túneis que expõem serviços do notebook para a internet).
-- Existe um cron de reboot a cada 12h (`sudo crontab -l`). Avalie se ainda faz sentido.
+- **O notebook é só do iptv** (decisão do dono, 2026-09-28). Rodam só: `warp` (Cloudflare WARP, a
+  saída para a internet), `bot-supremo`, `bot-supremo-video`, `bot-supremo-painel` e `bot-supremo-tunel`.
+  O FlareSolverr antigo, o túnel antigo (`servidor-caseiro-01`, `02proxy-web`) e o WARP instalado no
+  sistema foram removidos; backup em `~/antigo-2026-09-28.tgz`.
+- **Fora do Docker, fica:** SSH, **Tailscale** (o dono acessa o terminal pelo celular) e **Samba** (pasta
+  compartilhada com o PC dele). Não mexer neles.
+- **Boot:** o crontab do usuário roda `@reboot ~/start.sh`, que só faz o hard-reset do `warp`
+  (`~/content-warp/short/docker-hard-reset.sh`); o timer `bot-supremo-atualizar` recria o resto.
+  **Não há mais reboot automático** (o de 12 h saiu em 2026-09-28: cortava quem assistia).
+- **Reiniciar o `warp` troca o IP público do WARP** (medido em 2026-09-28). Os links de vídeo guardados
+  morrem, e o serviço de vídeo percebe no teste e busca outros (~15–30 s no primeiro play de cada um).
 
 ### Docker
 - Tudo deste projeto roda num container (`bot-supremo`): tela, Chrome, extensão, serviço Python e vigia.

@@ -10,3 +10,6 @@ services:
   video:
     volumes:
       - ./video:/opt/bot-supremo/video:ro
+  painel:
+    volumes:
+      - ./painel:/opt/bot-supremo/painel:ro

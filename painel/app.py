@@ -34,12 +34,18 @@ VNC_SENHA = os.environ.get("VNC_SENHA", "")
 URL_BOT = os.environ.get("PAINEL_URL_BOT", "http://warp:8080")
 URL_VIDEO = os.environ.get("PAINEL_URL_VIDEO", "http://warp:8070")
 VIDEO_TOKEN = os.environ.get("VIDEO_TOKEN", "")
+# Os mesmos serviços, vistos de fora (Cloudflare + túnel), como a TV vê.
+URL_BOT_PUBLICA = os.environ.get("PAINEL_URL_BOT_PUBLICA", "https://bot.iptv01.asia")
+URL_VIDEO_PUBLICA = os.environ.get("PAINEL_URL_VIDEO_PUBLICA", "https://video.iptv01.asia")
 URL_VNC = os.environ.get("PAINEL_URL_VNC", "ws://warp:6080/websockify")
 RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
 IMAGEM = os.environ.get("PAINEL_IMAGEM", "ghcr.io/rafaelsg-01/bot-supremo:latest")
 DIR_NOVNC = "/usr/share/novnc"
 
 CONTAINER_BOT = "bot-supremo"
+CONTAINER_VIDEO = "bot-supremo-video"
+CONTAINER_TUNEL = "bot-supremo-tunel"
+CONTAINER_WARP = "warp"
 # Containers que aparecem no painel, na ordem, com um nome que o dono entende.
 CONTAINERS = [
     ("bot-supremo", "Bot (Chrome + serviço)"),
@@ -47,8 +53,6 @@ CONTAINERS = [
     ("warp", "WARP (saída para a internet)"),
     ("bot-supremo-tunel", "Túnel (bot., video. e painel.iptv01.asia)"),
     ("bot-supremo-painel", "Painel (esta página)"),
-    ("content-proxy-web-01", "FlareSolverr antigo (sem uso)"),
-    ("cloudflared-tunnel", "Outro túnel (serviços antigos)"),
 ]
 
 COOKIE = "painel_sessao"
@@ -60,6 +64,7 @@ LINHA_PEDIDO = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) INFO pedido: pedido (\S+) -> (\w+) em (\d+) ms \((\{.*?\})\)(?: erros=(.*))?$"
 )
 
+cache_publico = {"quando": 0, "dados": {}}
 docker = Docker()
 falhas_login = {}  # ip -> [quantidade, bloqueado_até]
 cache_memoria = {"quando": 0, "dados": {}}
@@ -185,6 +190,25 @@ async def _saude_video(sessao):
         return {"semResposta": str(e) or type(e).__name__}
 
 
+async def _publico(sessao):
+    """Os endereços públicos respondem? (a cada 60 s). Pega o túnel caído mesmo com tudo bem por dentro."""
+    if time.time() - cache_publico["quando"] > 60:
+        async def um(url):
+            try:
+                inicio = time.monotonic()
+                async with sessao.get(url + "/saude", timeout=aiohttp.ClientTimeout(total=10),
+                                      headers={"User-Agent": "painel-bot-supremo"}) as r:
+                    await r.read()
+                    ms = round((time.monotonic() - inicio) * 1000)
+                    return {"ok": r.status == 200, "ms": ms, **({} if r.status == 200 else {"erro": f"HTTP {r.status}"})}
+            except Exception as e:
+                return {"ok": False, "erro": str(e) or type(e).__name__}
+        bot, video = await asyncio.gather(um(URL_BOT_PUBLICA), um(URL_VIDEO_PUBLICA))
+        cache_publico["dados"] = {"bot": bot, "video": video}
+        cache_publico["quando"] = time.time()
+    return cache_publico["dados"]
+
+
 async def _memorias(nomes):
     if time.time() - cache_memoria["quando"] > 15:
         resultados = await asyncio.gather(*(docker.memoria_mb(n) for n in nomes), return_exceptions=True)
@@ -239,7 +263,7 @@ async def _iptv(sessao):
     return cache_iptv["dados"]
 
 
-def _alertas(notebook, bot, containers, video):
+def _alertas(notebook, bot, containers, video, publico):
     """Frases simples do que está errado. Lista vazia = tudo funcionando."""
     a = []
     if "semResposta" in bot:
@@ -254,9 +278,19 @@ def _alertas(notebook, bot, containers, video):
         if (bot.get("memoriaChromeMb") or 0) > 1100:
             a.append("O Chrome está usando muita memória.")
     if "semResposta" in video:
-        a.append("O serviço de vídeo não está respondendo: os filmes e episódios não tocam.")
+        a.append("O serviço de vídeo não está respondendo: os filmes e episódios não tocam (tente Reiniciar o vídeo).")
+    else:
+        ultimo = (video.get("ultimos") or [None])[0]
+        if ultimo and ultimo.get("origem") == "erro":
+            a.append(f"A última busca de vídeo deu erro ({ultimo.get('horario', '')[11:16]}): {ultimo.get('erro')}. "
+                     "Tente Testar o vídeo; se repetir, Testar o site.")
+    # Por dentro funciona, por fora não: é o túnel (ou a Cloudflare).
+    if not (publico.get("video") or {}).get("ok", True) and "semResposta" not in video:
+        a.append("O endereço do vídeo (video.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")
+    if not (publico.get("bot") or {}).get("ok", True) and "semResposta" not in bot:
+        a.append("O endereço do bot (bot.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")
     for c in containers.get("lista", []):
-        if c["nome"] in ("bot-supremo", "bot-supremo-video", "warp", "bot-supremo-tunel") and c["estado"] != "running":
+        if c["nome"] in (CONTAINER_BOT, CONTAINER_VIDEO, CONTAINER_WARP, CONTAINER_TUNEL) and c["estado"] != "running":
             a.append(f"O container \"{c['descricao']}\" está parado.")
     if "erro" in containers:
         a.append(containers["erro"])
@@ -271,11 +305,13 @@ def _alertas(notebook, bot, containers, video):
 
 async def api_estado(request):
     sessao = request.app["sessao"]
-    bot, video, containers, iptv = await asyncio.gather(_saude_bot(sessao), _saude_video(sessao), _containers(), _iptv(sessao))
+    bot, video, containers, iptv, publico = await asyncio.gather(
+        _saude_bot(sessao), _saude_video(sessao), _containers(), _iptv(sessao), _publico(sessao))
     notebook = _notebook()
     return web.json_response({
         "agora": time.time(),
-        "alertas": _alertas(notebook, bot, containers, video),
+        "alertas": _alertas(notebook, bot, containers, video, publico),
+        "publico": publico,
         "notebook": notebook,
         "bot": bot,
         "video": video,
@@ -338,6 +374,60 @@ async def _post_bot(sessao, caminho, corpo, timeout_s=30):
         return json.loads(texto) if texto else {}
 
 
+async def _testar_video(sessao):
+    """O caminho inteiro do vídeo: link do episódio usado por último (testado ou buscado de novo) e
+    4 MB baixados pela internet (Cloudflare + túnel + notebook + site), como a TV faz."""
+    inicio = time.monotonic()
+    async with sessao.post(URL_VIDEO + "/v1/teste", headers={"Authorization": f"Bearer {VIDEO_TOKEN}"},
+                           timeout=aiohttp.ClientTimeout(total=600)) as r:
+        t = await r.json()
+    if not t.get("ok"):
+        return {"ok": False, "mensagem": f"O vídeo NÃO passou: {t.get('erro')}"}
+    origem = "do cache (testado)" if t.get("origem") == "cache" else "buscado agora no site"
+    link_s = (t.get("ms") or 0) / 1000
+    tamanho = 4 * 1024 * 1024
+    inicio_download = time.monotonic()
+    try:
+        async with sessao.get(t["url"], headers={"Range": f"bytes=0-{tamanho - 1}"},
+                              timeout=aiohttp.ClientTimeout(total=120)) as v:
+            recebidos = 0
+            async for bloco in v.content.iter_chunked(65536):
+                recebidos += len(bloco)
+            status = v.status
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return {"ok": False, "mensagem": f"O link está bom ({origem}), mas o vídeo não veio pela internet: {e}. Tente Reiniciar o túnel."}
+    segundos = max(time.monotonic() - inicio_download, 0.001)
+    mbit = recebidos * 8 / 1e6 / segundos
+    if status not in (200, 206) or recebidos < tamanho // 2:
+        return {"ok": False, "mensagem": f"O link está bom ({origem}), mas pela internet veio HTTP {status} com {recebidos // 1024} KB. Tente Reiniciar o túnel."}
+    lento = " Está lento: tente Reiniciar o túnel." if mbit < 15 else ""
+    return {"ok": True, "mensagem": f"Vídeo ok: link {origem} em {link_s:.1f} s; pela internet a {mbit:.0f} Mbit/s "
+                                     f"(teste inteiro em {time.monotonic() - inicio:.0f} s).{lento}"}
+
+
+async def _reiniciar_internet():
+    """Reinicia o WARP e, quando ele volta, o bot e o vídeo (os dois usam a rede dele)."""
+    await docker.reiniciar(CONTAINER_WARP, espera_s=10)
+    inicio = time.monotonic()
+    saude = "?"
+    while time.monotonic() - inicio < 120:
+        await asyncio.sleep(5)
+        try:
+            saude = ((await docker.container(CONTAINER_WARP))["State"].get("Health") or {}).get("Status", "?")
+        except (ErroDocker, aiohttp.ClientError, OSError):
+            continue
+        if saude == "healthy":
+            break
+    await docker.reiniciar(CONTAINER_BOT)
+    await docker.reiniciar(CONTAINER_VIDEO, espera_s=5)
+    cache_publico["quando"] = 0
+    if saude != "healthy":
+        return {"ok": False, "mensagem": f"O WARP não ficou pronto em 2 min ({saude}). Bot e vídeo reiniciados assim mesmo. "
+                                         "Se nada voltar em 5 min, Reinicie o notebook."}
+    return {"ok": True, "mensagem": f"Internet (WARP) reiniciada em {time.monotonic() - inicio:.0f} s; bot e vídeo reiniciados. "
+                                    "Tudo volta em uns 30 s."}
+
+
 async def api_acao(request):
     if request.headers.get("X-Painel") != "1":
         raise web.HTTPForbidden()
@@ -368,6 +458,27 @@ async def api_acao(request):
             else:
                 msg = f"O site NÃO abriu: {r.get('status')} {r.get('statusHttp') or ''} {' '.join(r.get('erros') or [])}"
             return web.json_response({"ok": bool(r.get("ok")), "mensagem": msg})
+        if acao == "testar-video":
+            return web.json_response(await _testar_video(sessao))
+        if acao == "reiniciar-tunel":
+            # Esta página também chega pelo túnel: responde primeiro e reinicia logo depois.
+            async def depois():
+                await asyncio.sleep(1)
+                try:
+                    await docker.reiniciar(CONTAINER_TUNEL, espera_s=5)
+                except (ErroDocker, aiohttp.ClientError, OSError) as e:
+                    log.warning("falha ao reiniciar o túnel: %s", e)
+                cache_publico["quando"] = 0
+            tarefa = asyncio.create_task(depois())
+            request.app["tarefas"].add(tarefa)
+            tarefa.add_done_callback(request.app["tarefas"].discard)
+            return web.json_response({"ok": True, "mensagem": "Reiniciando o túnel agora. Esta página e os vídeos ficam sem resposta "
+                                                              "por uns 10 s; depois, clique em Testar o vídeo."})
+        if acao == "reiniciar-video":
+            await docker.reiniciar(CONTAINER_VIDEO, espera_s=5)
+            return web.json_response({"ok": True, "mensagem": "Serviço de vídeo reiniciado. Volta em uns 5 s (quem assistia precisa dar play de novo)."})
+        if acao == "reiniciar-internet":
+            return web.json_response(await _reiniciar_internet())
         if acao == "reiniciar-notebook":
             await docker.reiniciar_notebook(IMAGEM)
             return web.json_response({"ok": True, "mensagem": "Reiniciando o notebook. Tudo volta sozinho em 3 a 5 min."})
@@ -418,6 +529,7 @@ async def saude(request):
 
 async def ao_iniciar(app):
     app["sessao"] = aiohttp.ClientSession()
+    app["tarefas"] = set()
     psutil.cpu_percent(interval=None)  # a primeira leitura só serve de referência
 
 

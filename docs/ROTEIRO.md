@@ -52,7 +52,7 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 ## Fase 4: exposição e operação
 
 - [x] `https://bot.iptv01.asia` por um túnel próprio (`bot-supremo`), serviço `tunel` no compose
-- [ ] Avaliar se o cron de reboot a cada 12h ainda faz sentido
+- [x] Cron de reboot a cada 12h: removido em 2026-09-28 (cortava quem assistia; os containers se consertam sozinhos)
 
 ## Fase 5: ligar o projeto-iptv
 
@@ -65,8 +65,9 @@ O Docker e o CI vêm já aqui, porque o notebook não compila nada.
 
 ## Fase 6: desligar o FlareSolverr antigo
 
-- [ ] Parar e remover o container `content-proxy-web-01` (libera ~620 MB)
-- [ ] Tirar do `~/start.sh` os passos do proxy antigo e conferir que nada mais depende dele
+- [x] Parar e remover o container `content-proxy-web-01` e o túnel antigo (feito em 2026-09-28, 725 MB)
+- [x] `~/start.sh` só religa o WARP; túnel `servidor-caseiro-01` e DNS `02proxy-web` apagados na Cloudflare
+- [ ] Tirar do iptv as rotas de teste/diag que ainda chamam `env.proxyWeb` (código morto)
 
 ## Fase 7: vídeo mais rápido (próximo trabalho)
 
@@ -94,7 +95,8 @@ Um episódio fora do cache levava ~30–38 s; agora leva ~15 s pela TV (2026-09-
 - [x] iptv: `Function_getLinkMp4ListComCache` chama o notebook; a TV recebe URLs assinadas do
       `video.iptv01.asia`; o `/proxy-rc` do Worker virou 302. Cache `mp4-list-*` do KV aposentado.
 - [x] Painel: cartão "Vídeo" (streams, cache, última busca, IP do WARP).
-- [ ] Observar alguns dias: IP do WARP muda nos reboots? (o serviço anota no log e no painel)
+- [x] IP do WARP muda quando o `warp` reinicia (e portanto em todo boot): medido em 2026-09-28.
+- [x] Painel de auto-reparo: Testar o vídeo, Reiniciar o túnel/vídeo/internet, checagem pela internet.
 - [ ] Olhar a falha "a extensão não respondeu a 'localizar' em 15s" (fez 1 busca cair na reserva e levar 104 s).
 
 ## Descobertas e medições
@@ -144,3 +146,5 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-28 | Serviço de vídeo | Link novo pelo iptv 17,7 s; do cache (com teste de 1 byte) 0,2–0,7 s. Repasse: 1º byte 0,1–0,3 s, ~80–100 Mbit/s pelo túnel. Celeron sem AES-NI satura os 2 núcleos a ~230–250 Mbit/s de repasse (um vídeo usa ~2–3 Mbit/s). Upload da casa ~170 Mbit/s. |
 | 2026-09-28 | Túnel lento | Por um tempo o túnel `bot-supremo` ficou em ~7 Mbit/s no total (QUIC ou http2), enquanto um túnel novo na mesma zona fazia ~85 Mbit/s. Depois de parar e subir o container de novo, voltou a 80–100 Mbit/s. Remédio: `docker restart bot-supremo-tunel`. |
 | 2026-09-28 | DNS e TLS do proxy | O DNS do WARP só devolve IPv4 para `-_kerberos-...null-null.shop` (e o IPv4 recebe 404); o IPv6 vem por DoH. O `ssl` do Python recusa o nome ("Hostname mismatch") com certificado válido `*.null-null.shop`: verificação da cadeia + nome conferido à mão. |
+| 2026-09-28 | IP do WARP | Reiniciar o container `warp` trocou o IP público (`2a09:bac5:5a4:878::d8:106` → `2a09:bac1:1120:28::49a:8`). O link guardado morreu e o teste do serviço de vídeo buscou outro (29 s). |
+| 2026-09-28 | Painel pela internet | Todos os botões pela API do painel: Testar o vídeo (2–5 s do cache, 62–73 Mbit/s), Testar o site (2–7 s), Reiniciar o túnel (a resposta morria junto com o túnel: agora responde antes), Reiniciar o vídeo, Reabrir o Chrome, Reiniciar o bot, Reiniciar a internet (WARP pronto em 43 s). |
