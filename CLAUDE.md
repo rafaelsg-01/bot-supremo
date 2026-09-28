@@ -283,8 +283,9 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
   sistema foram removidos; backup em `~/antigo-2026-09-28.tgz`.
 - **Fora do Docker, fica:** SSH, **Tailscale** (o dono acessa o terminal pelo celular) e **Samba** (pasta
   compartilhada com o PC dele). Não mexer neles.
-- **Boot:** o crontab do usuário roda `@reboot ~/start.sh`, que só faz o hard-reset do `warp`
-  (`~/content-warp/short/docker-hard-reset.sh`); o timer `bot-supremo-atualizar` recria o resto.
+- **Boot:** o crontab do usuário roda `@reboot ~/start.sh`, que faz o hard-reset do `warp`
+  (`~/content-warp/short/docker-hard-reset.sh`, que espera o container ficar `healthy`) e logo chama
+  `sudo systemctl start bot-supremo-atualizar.service`, que recria o resto. `start.sh` inteiro: ~70 s.
   **Não há mais reboot automático** (o de 12 h saiu em 2026-09-28: cortava quem assistia).
 - **Reiniciar o `warp` troca o IP público do WARP** (medido em 2026-09-28). Os links de vídeo guardados
   morrem, e o serviço de vídeo percebe no teste e busca outros (~15–30 s no primeiro play de cada um).

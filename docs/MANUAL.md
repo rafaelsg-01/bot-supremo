@@ -36,7 +36,7 @@ Botões, por nível (a página mostra a ordem por sintoma). Todos testados pela 
 | Leve | Reabrir o Chrome | fecha e abre o Chrome do bot | ~15 s |
 | Médio | Reiniciar o bot | container `bot-supremo` | ~30 s |
 | Médio | Reiniciar a internet (WARP) | reinicia o `warp`, espera `healthy` e reinicia bot e vídeo. **Troca o IP do WARP** | ~1 min |
-| Forte | Reiniciar o notebook | `systemctl reboot` por um container privilegiado | 3–5 min |
+| Forte | Reiniciar o notebook | `systemctl reboot` por um container privilegiado. **Troca o IP do WARP** | ~5 min (painel volta em ~4) |
 
 - Vídeo não abre ou trava: Testar o vídeo → Reiniciar o túnel → Reiniciar o vídeo → Reiniciar a
   internet → Reiniciar o notebook.
