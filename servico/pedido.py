@@ -132,6 +132,8 @@ def validar(corpo):
         "marcarRede": marcar_rede,
         "esperarRede": esperar_rede,
         "html": bool(corpo.get("html", True)),
+        # Depuração: cada item de `rede` ganha os headers enviados e recebidos.
+        "cabecalhos": bool(corpo.get("cabecalhos", False)) and esperar_rede is not None,
         "timeoutMs": timeout,
     }
 
@@ -294,6 +296,11 @@ class Execucao:
                 except ErroExtensao as e:
                     self.erros.append(f"falha ao inspecionar: {e}")
         finally:
+            if self.p["cabecalhos"]:
+                try:
+                    await self.ponte.pedir("observarCabecalhos", padrao=None)
+                except ErroExtensao:
+                    pass
             consumidor.cancel()
             self.ponte.parar_de_ouvir(fila)
             await self._limpar()
@@ -330,6 +337,8 @@ class Execucao:
         preparo = await self.ponte.pedir("prepararAba")
         self.aba = preparo["aba"]
         self._marco("aba_pronta")
+        if self.p["cabecalhos"]:
+            await self.ponte.pedir("observarCabecalhos", padrao=self.p["esperarRede"]["regex"].pattern)
         await self._navegar()
         self.etapas["navegar"] = self._ms(t)
 
@@ -398,6 +407,11 @@ class Execucao:
                     self.rede.append(item)
                     self._rede_por_id[ev["req"]] = item
                     self.casou.set()
+            elif tipo == "reqCab":
+                item = self._rede_por_id.get(ev["req"])
+                if item:
+                    chave = "cabecalhos" if ev["lado"] == "enviados" else "cabecalhosResposta"
+                    item[chave] = {c["name"]: c.get("value") for c in ev.get("cabecalhos") or []}
             elif tipo == "reqFim":
                 url_marcada = self._marcados.pop(ev["req"], None)
                 if url_marcada:

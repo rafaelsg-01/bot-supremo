@@ -130,6 +130,9 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
   de cada frame e o alvo). Serve para descobrir seletores.
 - `marcarRede` (opcional, para medir): uma regex. Cada request que casar vira marco na `linhaDoTempo`
   (início e fim, com status). Não muda `rede` nem `esperarRede`.
+- `cabecalhos: true` (opcional, para depuração, exige `esperarRede`): cada item de `rede` ganha
+  `cabecalhos` (headers enviados, com cookie e referer) e `cabecalhosResposta`, lidos pelo
+  `webRequest` (só observa).
 - `esperarRede.padrao` é uma regex. Ela filtra o que volta em `rede` e o pedido espera a primeira
   request que casar. Requests do service worker do site (aba `-1`) também contam.
 - `timeoutMs` geral: padrão 60000, máximo 240000.

@@ -95,6 +95,13 @@ const COMANDOS = {
     return true;
   },
 
+  // Depuração: passa a mandar os headers (enviados e recebidos) das requests cuja URL casa com
+  // o padrão. Sem padrão, para. Só observa: nada é alterado.
+  async observarCabecalhos({ padrao }) {
+    CABECALHOS = padrao ? new RegExp(padrao) : null;
+    return true;
+  },
+
   async estadoAba({ aba }) {
     const a = await chrome.tabs.get(aba);
     return { url: a.url, titulo: a.title, status: a.status };
@@ -246,6 +253,20 @@ chrome.webRequest.onCompleted.addListener((d) => {
   if (propria(d)) return;
   enviar({ evento: "reqFim", req: d.requestId, aba: d.tabId, status: d.statusCode, horario: d.timeStamp, doCache: d.fromCache });
 }, FILTRO);
+
+// Headers de verdade, como saíram e como voltaram (extraHeaders inclui cookie e referer).
+// Só quando um pedido pediu `cabecalhos`, e só para as URLs do padrão dele.
+let CABECALHOS = null;
+
+chrome.webRequest.onSendHeaders.addListener((d) => {
+  if (!CABECALHOS || propria(d) || !CABECALHOS.test(d.url)) return;
+  enviar({ evento: "reqCab", req: d.requestId, aba: d.tabId, lado: "enviados", cabecalhos: d.requestHeaders });
+}, FILTRO, ["requestHeaders", "extraHeaders"]);
+
+chrome.webRequest.onResponseStarted.addListener((d) => {
+  if (!CABECALHOS || propria(d) || !CABECALHOS.test(d.url)) return;
+  enviar({ evento: "reqCab", req: d.requestId, aba: d.tabId, lado: "recebidos", cabecalhos: d.responseHeaders });
+}, FILTRO, ["responseHeaders", "extraHeaders"]);
 
 chrome.webRequest.onErrorOccurred.addListener((d) => {
   if (propria(d)) return;
