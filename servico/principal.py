@@ -181,7 +181,11 @@ def criar_api(ponte, navegador, fila):
         return web.json_response({"ok": True, "pausa": fila.estado_pausa()})
 
     async def reabrir_chrome(request):
-        log.warning("reabrindo o Chrome a pedido do painel")
+        try:
+            motivo = str((await request.json()).get("motivo") or "")
+        except (ValueError, json.JSONDecodeError, AttributeError):
+            motivo = ""
+        log.warning("reabrindo o Chrome: %s", motivo or "a pedido do painel")
         if fila.estado_pausa().get("segurando"):
             # A pausa já segura a fila: nenhum pedido está rodando.
             await navegador.reiniciar_chrome()

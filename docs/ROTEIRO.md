@@ -97,6 +97,8 @@ Um episódio fora do cache levava ~30–38 s; agora leva ~15 s pela TV (2026-09-
 - [x] Painel: cartão "Vídeo" (streams, cache, última busca, IP do WARP).
 - [x] IP do WARP muda quando o `warp` reinicia (e portanto em todo boot): medido em 2026-09-28.
 - [x] Painel de auto-reparo: Testar o vídeo, Reiniciar o túnel/vídeo/internet, checagem pela internet.
+- [x] Reparo automático: o serviço de vídeo reabre o Chrome sozinho quando o player não pede o vídeo,
+      e tenta de novo uma vez (no máximo 1 reparo a cada 10 min).
 - [ ] Olhar a falha "a extensão não respondeu a 'localizar' em 15s" (fez 1 busca cair na reserva e levar 104 s).
 
 ## Descobertas e medições
@@ -149,3 +151,4 @@ problemas e soluções. Formato: data, assunto e o que foi visto.
 | 2026-09-28 | IP do WARP | Reiniciar o container `warp` trocou o IP público (`2a09:bac5:5a4:878::d8:106` → `2a09:bac1:1120:28::49a:8`). O link guardado morreu e o teste do serviço de vídeo buscou outro (29 s). |
 | 2026-09-28 | Painel pela internet | Todos os botões pela API do painel: Testar o vídeo (2–5 s do cache, 62–73 Mbit/s), Testar o site (2–7 s), Reiniciar o túnel (a resposta morria junto com o túnel: agora responde antes), Reiniciar o vídeo, Reabrir o Chrome, Reiniciar o bot, Reiniciar a internet (WARP pronto em 43 s). |
 | 2026-09-28 | Reboot pelo painel | Clique → painel de volta em 3 min 52 s, tudo sem alertas em 6 min 58 s, IP do WARP novo. O `docker-run.sh` do WARP esperava 2 min pelo SOCKS da porta 1080 (que só o FlareSolverr usava e não responde): trocado pelo `healthy` do container (pronto em 15 s), e o `start.sh` passou a chamar o atualizador na hora. `start.sh` inteiro: de 264 s para 69 s; bot pronto 74 s depois. |
+| 2026-10-01 | Chrome num estado ruim | 00:34–00:39: 4 buscas de vídeo (3 de um episódio, 1 de outro) com `nenhuma request casou com ...mp4 em 30000 ms`, ~46 s cada; um episódio diferente funcionou no meio. Depois de "Reabrir o Chrome" no painel, o mesmo episódio saiu em 28 s. Virou reparo automático no serviço de vídeo. |

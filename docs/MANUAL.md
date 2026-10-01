@@ -43,6 +43,10 @@ Botões, por nível (a página mostra a ordem por sintoma). Todos testados pela 
 - Filme ou episódio novo não carrega: Testar o site → Reabrir o Chrome → Reiniciar o bot → Reiniciar
   a internet → Reiniciar o notebook.
 
+**Reparo automático (2026-10-01):** quando o player não pede o vídeo (`nenhuma request casou ...`), o
+serviço de vídeo faz sozinho o "Reabrir o Chrome" e tenta a busca mais uma vez, no máximo uma vez a cada
+10 min (detalhes na seção 12). O cartão "Vídeo" mostra quando foi a última vez.
+
 "Pausar o bot" segura os pedidos (até 30 min) para mexer na tela sem conflito. O semáforo também
 avisa quando `video.` ou `bot.iptv01.asia` não respondem pela internet (checado a cada 60 s) e quando a
 última busca de vídeo deu erro.
@@ -241,6 +245,7 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 |---|---|---|
 | `/saude` → 502/`error code: 502` | container recriando (deploy, reboot) | esperar 1–2 min. O timer sobe tudo sozinho |
 | `/saude` com `extensao.conectada: false` | Chrome travado num aviso | o serviço reabre o Chrome sozinho em 2 min; olhe `/v1/tela` |
+| Vídeo volta `erro` com `nenhuma request casou`, e voltou só depois de reabrir o Chrome (2026-10-01) | Chrome num estado ruim | o serviço de vídeo já reabre o Chrome sozinho e tenta de novo (seção 12). Se o erro vier com "mesmo depois de reabrir o Chrome", é o site: ver a linha de baixo |
 | Vídeo volta `false`, log do bot com `nenhuma request casou` e o player chamando `serverforms.api` com 503/521 | limite do site estourado | parar de pedir vídeos novos por ~10 min. Os que estão no cache continuam tocando |
 | `[bot-supremo] reserva:` no `wrangler tail` | o pedido rápido não fez o player reagir e o iptv usou o pedido antigo | normal de vez em quando. Se for sempre, ver a linha `tempo` do bot (`frame_completo`, `clicou`, `sem_reacao`) |
 | `aviso: a digitação abriu ...` em `erros` | uma tecla se perdeu (ex.: alguém mexeu no teclado do notebook) | nada: o bot digita de novo sozinho. Se virar frequente, subir `ATRASO_DIGITACAO_MS` no `.env` |
@@ -449,6 +454,16 @@ se o Chrome travar ou reiniciar, quem está assistindo continua.
   `pagina`, pega um link novo e continua.
 - `GET /saude` (Bearer ou `?token=`): streams, links guardados, buscas em andamento, últimas buscas,
   IP público do WARP e desde quando (o log anota quando muda).
+
+**Reparo automático** (`_buscar_com_reparo` em `video/app.py`, desde 2026-10-01): se o bot responder mas
+o player não pedir nenhum vídeo (`ErroPlayer` em `video/busca.py`), o serviço chama
+`POST /v1/reabrir-chrome` no bot (com `motivo`, que aparece no log do bot como `reabrindo o Chrome: ...`)
+e repete a busca **uma** vez. No máximo um reparo a cada 10 min (`INTERVALO_REPARO_S`): se o problema
+for o limite do site ou o site fora, reabrir não ajuda e cada tentativa a mais gasta o limite do
+`serverforms.api`. Se duas páginas falharem juntas, só uma reabre; a outra só tenta de novo. Erros de
+rede com o bot (bot fora do ar) não disparam o reparo. O histórico (`ultimos`) marca `reparo` e o
+`/saude` mostra `ultimoReparo`. Motivo: em 2026-10-01 00:34–00:39 quatro buscas falharam assim e só
+voltaram depois de clicar em "Reabrir o Chrome" no painel.
 
 **Cache** (`video/cache.py`): SQLite em `dados/video/cache.sqlite`, chave = página (sem domínio), sem
 prazo. A cada entrega testa o 1º link (1 byte). 200/206 = entrega; qualquer outra coisa = apaga e busca

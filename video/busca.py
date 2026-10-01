@@ -52,6 +52,11 @@ class ErroBusca(Exception):
     pass
 
 
+class ErroPlayer(ErroBusca):
+    """O bot respondeu, mas o player não pediu nenhum vídeo. Às vezes é o Chrome que ficou num
+    estado ruim (01/10: só voltou depois de reabrir o Chrome); por isso quem chama pode reabrir."""
+
+
 # Bot momentaneamente fora (container sendo recriado) ou fila cheia: tenta mais 2 vezes.
 STATUS_TENTAR_DE_NOVO = {429, 502, 503, 504}
 
@@ -99,5 +104,16 @@ class Busca:
             resposta = await self._navegar(pedido_reserva(url_pagina))
             links = self._links(resposta)
         if not links:
-            raise ErroBusca(f"o player não pediu nenhum vídeo ({resposta.get('status')}, {resposta.get('erros')})")
+            raise ErroPlayer(f"o player não pediu nenhum vídeo ({resposta.get('status')}, {resposta.get('erros')})")
         return links
+
+    async def reabrir_chrome(self, motivo):
+        """Pede ao bot para fechar e abrir o Chrome (ele espera o pedido da vez terminar)."""
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as s:
+                async with s.post(f"{self.url_bot}/v1/reabrir-chrome", json={"motivo": motivo},
+                                  headers={"Authorization": f"Bearer {self.token}"}) as r:
+                    if r.status != 200:
+                        raise ErroBusca(f"bot respondeu HTTP {r.status} ao reabrir o Chrome: {(await r.text())[:200]}")
+        except (aiohttp.ClientError, OSError, TimeoutError) as e:
+            raise ErroBusca(f"não consegui pedir para reabrir o Chrome: {e}") from None

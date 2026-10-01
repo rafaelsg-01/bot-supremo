@@ -242,6 +242,7 @@ async function atualizarEstado() {
       ['Links guardados', `${vd.linksNoCache ?? '?'}`],
       ['Buscando', (vd.buscando || []).length ? esc(vd.buscando.join(', ')) : 'nada'],
       ['Último link', ult ? `${esc(ult.horario.slice(11))} · ${ult.origem === 'erro' ? '<span class="ruim">erro</span>' : NOMES_ORIGEM[ult.origem]} · ${(ult.ms / 1000).toFixed(1)} s` : '—'],
+      ['Chrome reaberto sozinho', vd.ultimoReparo ? `${esc(vd.ultimoReparo)}<div class="suave">o vídeo não vinha; reabre no máximo 1 vez a cada 10 min</div>` : 'nunca, desde que ligou'],
       ['Enviado', `${vd.mbEnviados ?? 0} MB desde que ligou`],
       ['IP do WARP', vd.ipPublico ? `${esc(vd.ipPublico)}<div class="suave">desde ${esc(vd.ipDesde || '?')}</div>` : '—'],
     ]);

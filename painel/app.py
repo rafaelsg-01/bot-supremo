@@ -282,8 +282,11 @@ def _alertas(notebook, bot, containers, video, publico):
     else:
         ultimo = (video.get("ultimos") or [None])[0]
         if ultimo and ultimo.get("origem") == "erro":
-            a.append(f"A última busca de vídeo deu erro ({ultimo.get('horario', '')[11:16]}): {ultimo.get('erro')}. "
-                     "Tente Testar o vídeo; se repetir, Testar o site.")
+            if ultimo.get("reparo"):
+                dica = "O Chrome já foi reaberto sozinho e não resolveu: tente Testar o site e depois Reiniciar o bot."
+            else:
+                dica = "Tente Testar o vídeo; se repetir, Testar o site."
+            a.append(f"A última busca de vídeo deu erro ({ultimo.get('horario', '')[11:16]}): {ultimo.get('erro')}. {dica}")
     # Por dentro funciona, por fora não: é o túnel (ou a Cloudflare).
     if not (publico.get("video") or {}).get("ok", True) and "semResposta" not in video:
         a.append("O endereço do vídeo (video.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")

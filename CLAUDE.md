@@ -265,6 +265,8 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
    - `POST /v1/mp4` (Bearer `VIDEO_TOKEN`): devolve o link do vídeo de uma página. **Guarda o link
      num SQLite sem prazo e testa antes de cada entrega** (decisão do dono, 2026-09-28); se o link
      morreu, apaga e pede um novo ao bot na hora. É o único cache no notebook: o bot continua sem cache;
+     se o player não pedir o vídeo, **reabre o Chrome sozinho e tenta mais uma vez** (no máximo uma vez
+     a cada 10 min; seção 12 do MANUAL);
    - `GET /proxy-rc?url=&pagina=&sig=`: repassa o vídeo, pelo IPv6 do WARP, para a TV e o site.
      Aceita qualquer URL assinada pelo iptv (HMAC com o `VIDEO_TOKEN`), sem lista de domínios;
    - `GET /saude`: streams, cache, últimas buscas e o IP público do WARP.

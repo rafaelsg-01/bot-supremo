@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 import aiohttp
 from aiohttp import web
 
-from .busca import Busca, ErroBusca
+from .busca import Busca, ErroBusca, ErroPlayer
 from .cache import Cache
 from .origem import ErroOrigem, Origem
 
@@ -41,6 +41,10 @@ URL_PUBLICA = os.environ.get("VIDEO_URL_PUBLICA", "https://video.iptv01.asia")
 # Domínio do site até o iptv mandar o atual (o último visto fica guardado no cache).
 RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
 INTERVALO_MANTER_VIVA_S = 20
+# Reparo automático: se o player não pedir o vídeo, reabre o Chrome e tenta uma vez de novo. No
+# máximo um reparo a cada 10 min: se o problema for o limite do site ou o site fora, reabrir não
+# resolve, e cada tentativa a mais gasta o limite do serverforms.api.
+INTERVALO_REPARO_S = 600
 BLOCO = 256 * 1024
 
 # Headers da origem que seguem para quem pediu o vídeo.
@@ -63,6 +67,10 @@ class Servico:
         self.bytes_total = 0
         self.ip = None
         self.ip_desde = None
+        self._trava_reparo = asyncio.Lock()
+        self.ultimo_reparo = None  # time.monotonic() do último reparo automático
+        self.reparos = 0
+        self.ultimo_reparo_horario = None
 
     # --- link do vídeo ------------------------------------------------------
 
@@ -93,23 +101,56 @@ class Servico:
         if not url_pagina:
             dominio = await self.cache.meta("dominio") or RC_DOMINIO
             url_pagina = dominio.rstrip("/") + (pagina if pagina.startswith("/") else "/" + pagina)
+        reparo = None
         try:
             links = await self.busca.links(url_pagina)
+        except ErroPlayer as e:
+            try:
+                links, reparo = await self._buscar_com_reparo(pagina, url_pagina, e)
+            except ErroBusca as e2:
+                return self._registrar(pagina, "erro", ms(), erro=str(e2), reparo=getattr(e2, "reparo", None))
         except ErroBusca as e:
             return self._registrar(pagina, "erro", ms(), erro=str(e))
         ok, status = await self.origem.testar(links[0])
         if not ok:
-            return self._registrar(pagina, "erro", ms(), erro=f"o link novo não entregou vídeo ({status})")
+            return self._registrar(pagina, "erro", ms(), erro=f"o link novo não entregou vídeo ({status})", reparo=reparo)
         await self.cache.guardar(pagina, links, url_pagina)
-        return self._registrar(pagina, "novo", ms(), links=links)
+        return self._registrar(pagina, "novo", ms(), links=links, reparo=reparo)
 
-    def _registrar(self, pagina, origem, ms, links=None, erro=None):
+    async def _buscar_com_reparo(self, pagina, url_pagina, erro):
+        """O player não pediu o vídeo: reabre o Chrome (no máximo uma vez a cada INTERVALO_REPARO_S)
+        e tenta mais uma vez. Devolve (links, reparo) ou levanta ErroBusca."""
+        visto = self.reparos
+        async with self._trava_reparo:
+            if self.reparos != visto:
+                # Outra página reabriu o Chrome enquanto esperávamos a trava: só tenta de novo.
+                reparo = "tentou de novo com o Chrome recém-reaberto"
+            elif self.ultimo_reparo is not None and time.monotonic() - self.ultimo_reparo < INTERVALO_REPARO_S:
+                raise erro
+            else:
+                log.warning("mp4 %s: o player não pediu o vídeo; reabrindo o Chrome e tentando de novo (%s)", pagina, erro)
+                try:
+                    await self.busca.reabrir_chrome(f"o vídeo de {pagina} não veio (reparo automático)")
+                finally:
+                    self.reparos += 1
+                    self.ultimo_reparo = time.monotonic()
+                    self.ultimo_reparo_horario = time.strftime("%Y-%m-%d %H:%M:%S")
+                reparo = "reabriu o Chrome"
+        try:
+            return await self.busca.links(url_pagina), reparo
+        except ErroBusca as e:
+            novo = ErroBusca(f"{e} (mesmo depois de reabrir o Chrome)")
+            novo.reparo = reparo
+            raise novo from None
+
+    def _registrar(self, pagina, origem, ms, links=None, erro=None, reparo=None):
         if erro:
             log.warning("mp4 %s -> erro em %d ms: %s", pagina, ms, erro)
         else:
-            log.info("mp4 %s -> %s em %d ms", pagina, origem, ms)
+            log.info("mp4 %s -> %s em %d ms%s", pagina, origem, ms, f" ({reparo})" if reparo else "")
         self.historico.appendleft({"horario": time.strftime("%Y-%m-%d %H:%M:%S"), "pagina": pagina,
-                                   "origem": origem, "ms": ms, **({"erro": erro} if erro else {})})
+                                   "origem": origem, "ms": ms, **({"erro": erro} if erro else {}),
+                                   **({"reparo": reparo} if reparo else {})})
         if erro:
             return {"ok": False, "origem": origem, "ms": ms, "erro": erro}
         return {"ok": True, "links": links, "origem": origem, "ms": ms}
@@ -238,6 +279,7 @@ class Servico:
             "buscando": list(self.em_andamento),
             "ipPublico": self.ip,
             "ipDesde": self.ip_desde,
+            "ultimoReparo": self.ultimo_reparo_horario,
             "ultimos": list(self.historico),
         })
 
