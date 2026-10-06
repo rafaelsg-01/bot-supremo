@@ -38,7 +38,7 @@ VIDEO_TOKEN = os.environ.get("VIDEO_TOKEN", "")
 URL_BOT_PUBLICA = os.environ.get("PAINEL_URL_BOT_PUBLICA", "https://bot.iptv01.asia")
 URL_VIDEO_PUBLICA = os.environ.get("PAINEL_URL_VIDEO_PUBLICA", "https://video.iptv01.asia")
 URL_VNC = os.environ.get("PAINEL_URL_VNC", "ws://warp:6080/websockify")
-RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
+RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.ae")
 IMAGEM = os.environ.get("PAINEL_IMAGEM", "ghcr.io/rafaelsg-01/bot-supremo:latest")
 DIR_NOVNC = "/usr/share/novnc"
 

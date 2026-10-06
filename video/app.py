@@ -39,7 +39,7 @@ MAX_STREAMS = int(os.environ.get("VIDEO_MAX_STREAMS", 16))
 # Endereço público (túnel), para o teste do painel baixar o vídeo pela internet.
 URL_PUBLICA = os.environ.get("VIDEO_URL_PUBLICA", "https://video.iptv01.asia")
 # Domínio do site até o iptv mandar o atual (o último visto fica guardado no cache).
-RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.press")
+RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.ae")
 INTERVALO_MANTER_VIVA_S = 20
 # Reparo automático: se o player não pedir o vídeo, reabre o Chrome e tenta uma vez de novo. No
 # máximo um reparo a cada 10 min: se o problema for o limite do site ou o site fora, reabrir não
