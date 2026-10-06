@@ -59,6 +59,9 @@
   pre { background: #0b1020; color: #d1d5db; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
   .secao { margin-bottom: 16px; }
   .nivel { margin: 12px 0 2px; font-size: 13px; font-weight: 600; opacity: .8; }
+  .campo { display: block; margin-top: 12px; font-size: 13px; color: var(--suave); }
+  .linha { display: flex; gap: 8px; margin-top: 4px; }
+  .linha input { flex: 1; min-width: 0; border: 1px solid var(--borda); background: var(--fundo); color: var(--texto); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -85,6 +88,18 @@
     <section class="cartao">
       <h2>Vídeo</h2>
       <dl id="video"></dl>
+    </section>
+    <section class="cartao">
+      <h2>Domínio do site</h2>
+      <div class="suave">O sistema tenta o 1 e, se ele não funcionar, o 2. Quando o site muda de endereço, o sistema descobre o novo sozinho e grava no 2.</div>
+      <label class="campo">1. Só você escreve (pode ficar vazio)
+        <span class="linha"><input id="dominio1" placeholder="vazio: usa só o 2" autocomplete="off" spellcheck="false"><button data-dominio="dominio1">Salvar</button></span>
+      </label>
+      <label class="campo">2. Automático (você também pode escrever)
+        <span class="linha"><input id="dominio2" placeholder="ex.: redecanais.ae" autocomplete="off" spellcheck="false"><button data-dominio="dominio2">Salvar</button></span>
+      </label>
+      <dl id="dominio-info" style="margin-top:10px"></dl>
+      <div id="dominio-msg" class="suave"></div>
     </section>
     <section class="cartao">
       <h2>Consertar</h2>
@@ -248,6 +263,21 @@ async function atualizarEstado() {
     ]);
   }
 
+  const dom = (vd && vd.dominios) || null;
+  if (dom) {
+    // Não apaga o que o dono está digitando.
+    for (const k of ['dominio1', 'dominio2']) {
+      const campo = $(k);
+      if (document.activeElement !== campo && !campo.dataset.sujo) campo.value = (dom[k] || '').replace(/^https:\/\//, '');
+    }
+    const t = dom.ultimaTroca;
+    $('dominio-info').innerHTML = linhas([
+      ['Em uso agora', dom.pulandoDominio1 ? `<span class="aviso">o 2</span> · o 1 falhou, volta a ser tentado em ${dom.pulandoDominio1Min} min` : (dom.dominio1 ? 'o 1 (e o 2 se o 1 falhar)' : 'o 2')],
+      ['Última troca automática', t ? `${esc(t.horario)}: ${esc(t.de)} → <b>${esc(t.para)}</b><div class="suave">${esc(t.origem)}</div>` : 'nenhuma'],
+      ...(dom.ultimoErro ? [['Último problema', `<span class="ruim">${esc(dom.ultimoErro.horario.slice(11, 16))}</span> · ${esc(dom.ultimoErro.erro)}`]] : []),
+    ]);
+  }
+
   const bp = $('btn-pausa');
   if (pausa.ativa) {
     bp.textContent = 'Voltar ao normal'; bp.dataset.acao = 'despausar'; bp.dataset.confirma = ''; bp.className = 'primario';
@@ -309,6 +339,24 @@ document.querySelectorAll('button[data-acao]').forEach((botao) => botao.addEvent
   } catch (err) {
     msg.className = 'ruim';
     msg.textContent = 'Não consegui falar com o painel (se foi o notebook reiniciando, é normal).';
+  }
+  botao.disabled = false;
+  atualizar();
+}));
+
+for (const k of ['dominio1', 'dominio2']) $(k).addEventListener('input', () => { $(k).dataset.sujo = '1'; });
+document.querySelectorAll('button[data-dominio]').forEach((botao) => botao.addEventListener('click', async (ev) => {
+  ev.preventDefault();
+  const k = botao.dataset.dominio, valor = $(k).value.trim(), msg = $('dominio-msg');
+  if (k === 'dominio1' && !valor && !confirm('Deixar o domínio 1 vazio? O sistema passa a usar só o 2.')) return;
+  botao.disabled = true;
+  try {
+    const r = await (await api('/api/dominios', { method: 'POST', headers: { 'X-Painel': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ [k]: valor }) })).json();
+    msg.className = r.ok ? 'ok' : 'ruim';
+    msg.textContent = r.mensagem;
+    if (r.ok) delete $(k).dataset.sujo;
+  } catch (err) {
+    msg.className = 'ruim'; msg.textContent = 'Não consegui falar com o painel.';
   }
   botao.disabled = false;
   atualizar();

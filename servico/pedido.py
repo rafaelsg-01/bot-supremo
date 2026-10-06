@@ -120,6 +120,16 @@ def validar(corpo):
         except re.error as e:
             raise ErroValidacao(f"'marcarRede' inválido: {e}") from None
 
+    # A página tem que terminar num host que case com esta regex; se parar fora, o pedido acaba na hora.
+    host_esperado = None
+    if corpo.get("hostEsperado") is not None:
+        if not isinstance(corpo["hostEsperado"], str):
+            raise ErroValidacao("'hostEsperado' tem que ser uma regex em texto")
+        try:
+            host_esperado = re.compile(corpo["hostEsperado"], re.IGNORECASE)
+        except re.error as e:
+            raise ErroValidacao(f"'hostEsperado' inválido: {e}") from None
+
     esperar_pagina = corpo.get("esperarPagina", "quieta")
     if esperar_pagina not in ("quieta", "completa", "nao"):
         raise ErroValidacao("'esperarPagina' tem que ser 'quieta', 'completa' ou 'nao'")
@@ -130,6 +140,7 @@ def validar(corpo):
         "esperarPagina": esperar_pagina,
         "inspecionar": inspecionar,
         "marcarRede": marcar_rede,
+        "hostEsperado": host_esperado,
         "esperarRede": esperar_rede,
         "html": bool(corpo.get("html", True)),
         # Depuração: cada item de `rede` ganha os headers enviados e recebidos.
@@ -231,6 +242,10 @@ class Execucao:
         self.erros = []
         self.resultado_acoes = []
         self._tarefas_gancho = set()
+        # Por onde o frame principal passou (requests do documento e commits), sem cortar.
+        self.navegacao = []
+        self._navegou = False  # a digitação foi conferida: daqui em diante vale o hostEsperado
+        self._completo_em = None  # time.monotonic() do último "completo" do frame principal
 
     def _ms(self, desde):
         return round((time.monotonic() - desde) * 1000)
@@ -263,7 +278,7 @@ class Execucao:
         try:
             try:
                 async with asyncio.timeout(self.p["timeoutMs"] / 1000):
-                    await self._etapas()
+                    await self._etapas_vigiadas()
             except TimeoutError:
                 if _eh_desafio(self.titulo):
                     status = "desafio"
@@ -330,7 +345,46 @@ class Execucao:
             "duracaoMs": duracao,
             "etapas": self.etapas,
             "linhaDoTempo": self.marcos,
+            "navegacao": self.navegacao,
         }
+
+    async def _etapas_vigiadas(self):
+        """As etapas, mas com o hostEsperado: se a página parar fora do site, acaba na hora."""
+        if not self.p["hostEsperado"]:
+            return await self._etapas()
+        etapas = asyncio.create_task(self._etapas())
+        try:
+            while not etapas.done():
+                fora = self._fora_do_site()
+                if fora:
+                    self._marco("fora_do_site", url=_url_curta(fora))
+                    raise ErroPedido(f"a página saiu do site: {_url_curta(fora, 120)}")
+                await asyncio.wait({etapas}, timeout=0.25)
+            etapas.result()
+            # As etapas acabaram antes dos 3 s: vale onde a página está agora.
+            host = urlsplit(self.url_atual or "").hostname or ""
+            if host and not self.p["hostEsperado"].search(host):
+                self._marco("fora_do_site", url=_url_curta(self.url_atual))
+                raise ErroPedido(f"a página saiu do site: {_url_curta(self.url_atual, 120)}")
+        finally:
+            if not etapas.done():
+                etapas.cancel()
+                try:
+                    await etapas
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    def _fora_do_site(self):
+        """URL fora do hostEsperado em que a página parou: completou e ficou 3 s sem navegar de novo.
+        Um hop no meio do caminho (ex.: google.com/url redirecionando) não conta."""
+        if not self._navegou or not self.carregada.is_set() or self._completo_em is None:
+            return None
+        if time.monotonic() - self._completo_em < 3:
+            return None
+        host = urlsplit(self.url_atual or "").hostname or ""
+        if not host or self.p["hostEsperado"].search(host):
+            return None
+        return self.url_atual
 
     async def _etapas(self):
         t = time.monotonic()
@@ -380,6 +434,7 @@ class Execucao:
                     if ev.get("tipo") == "main_frame":
                         self._documentos.add(ev["req"])
                         if self.navegando:
+                            self._anotar_navegacao(ev["url"])
                             self._saiu(ev["url"])
                 elif aba == -1 and self.navegando:
                     self._sw_urls[ev["req"]] = ev["url"].split("#", 1)[0]
@@ -435,6 +490,7 @@ class Execucao:
                     self._saiu(ev.get("url"))
                 elif ev["fase"] == "commit":
                     self.url_atual = ev["url"]
+                    self._anotar_navegacao(ev["url"])
                     self.carregada.clear()
                     self.frames_completos.clear()
                     if not self.commit.is_set():
@@ -443,6 +499,7 @@ class Execucao:
                     self.commit.set()
                 elif ev["fase"] == "completo" and self.commit.is_set():
                     self._marco("completo")
+                    self._completo_em = time.monotonic()
                     self.carregada.set()
             elif tipo == "navFrame" and aba == self.aba and self.navegando:
                 # Iframes (anúncios, player). Um commit novo do mesmo frame desfaz o "completo".
@@ -456,6 +513,10 @@ class Execucao:
                     self.titulo = ev["titulo"]
                 if ev.get("url"):
                     self.url_atual = ev["url"]
+
+    def _anotar_navegacao(self, url):
+        if url and (not self.navegacao or self.navegacao[-1] != url):
+            self.navegacao.append(url)
 
     def _saiu(self, url):
         if not self.saiu.is_set():
@@ -498,6 +559,7 @@ class Execucao:
             if tentativa == 2:
                 await self.ponte.pedir("irPara", aba=self.aba, url=self.p["url"])
         await self.commit.wait()
+        self._navegou = True
 
     async def _digitar_url(self, texto):
         janela = await xdotool.janela_chrome()

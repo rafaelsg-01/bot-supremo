@@ -8,6 +8,11 @@ ser baixado daqui, e este serviço faz duas coisas:
 - GET/HEAD /proxy-rc?url=&pagina=&sig=: repassa o vídeo do site para quem pediu (TV, PC). Aceita
   qualquer URL assinada pelo iptv (HMAC com o VIDEO_TOKEN). Se o link morrer e vier a página,
   busca um link novo e continua.
+- POST /v1/pagina: abre uma página do site pelo bot (listas, séries) no domínio da vez.
+- GET/POST /v1/dominios: os dois domínios do site (painel). Ver dominio.py.
+
+O domínio do site é decidido aqui (dominio.py), não pelo iptv: se ele mudar, o serviço descobre
+o novo sozinho e grava no dominio2.
 
 Roda num container à parte (mesma imagem do bot, rede do warp). Uso: python3 -m video.app
 """
@@ -24,8 +29,9 @@ from urllib.parse import urlencode
 import aiohttp
 from aiohttp import web
 
-from .busca import Busca, ErroBusca, ErroPlayer
+from .busca import ACAO_DESAFIO, HOST_ESPERADO, Busca, ErroBusca, ErroPlayer
 from .cache import Cache
+from .dominio import ErroDominio, Dominios, falha_de_dominio
 from .origem import ErroOrigem, Origem
 
 log = logging.getLogger("video")
@@ -38,7 +44,7 @@ ARQ_CACHE = os.environ.get("VIDEO_CACHE", "/dados/cache.sqlite")
 MAX_STREAMS = int(os.environ.get("VIDEO_MAX_STREAMS", 16))
 # Endereço público (túnel), para o teste do painel baixar o vídeo pela internet.
 URL_PUBLICA = os.environ.get("VIDEO_URL_PUBLICA", "https://video.iptv01.asia")
-# Domínio do site até o iptv mandar o atual (o último visto fica guardado no cache).
+# Domínio do site na primeira subida (depois vale o que está no cache: dominio1/dominio2).
 RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.ae")
 INTERVALO_MANTER_VIVA_S = 20
 # Reparo automático: se o player não pedir o vídeo, reabre o Chrome e tenta uma vez de novo. No
@@ -61,6 +67,7 @@ class Servico:
         self.origem = Origem()
         self.cache = Cache(ARQ_CACHE)
         self.busca = Busca(URL_BOT, BOT_TOKEN)
+        self.dominios = Dominios(self.cache, self.busca, RC_DOMINIO)
         self.em_andamento = {}  # pagina -> tarefa (um pedido por página ao mesmo tempo)
         self.historico = collections.deque(maxlen=20)
         self.streams = 0
@@ -74,21 +81,19 @@ class Servico:
 
     # --- link do vídeo ------------------------------------------------------
 
-    def obter(self, pagina, url_pagina):
+    def obter(self, pagina):
         """Tarefa compartilhada: pedidos iguais ao mesmo tempo esperam a mesma busca. A tarefa segue
         até o fim mesmo se quem pediu desistir, para o link novo ficar no cache."""
         tarefa = self.em_andamento.get(pagina)
         if tarefa is None:
-            tarefa = asyncio.create_task(self._obter(pagina, url_pagina))
+            tarefa = asyncio.create_task(self._obter(pagina))
             self.em_andamento[pagina] = tarefa
             tarefa.add_done_callback(lambda _t: self.em_andamento.pop(pagina, None))
         return tarefa
 
-    async def _obter(self, pagina, url_pagina):
+    async def _obter(self, pagina):
         inicio = time.monotonic()
         ms = lambda: round((time.monotonic() - inicio) * 1000)  # noqa: E731
-        if url_pagina:
-            await self.cache.definir_meta("dominio", "/".join(url_pagina.split("/", 3)[:3]))
         guardado = await self.cache.ler(pagina)
         if guardado:
             ok, status = await self.origem.testar(guardado["links"][0])
@@ -97,16 +102,17 @@ class Servico:
                 return self._registrar(pagina, "cache", ms(), links=guardado["links"])
             log.info("mp4 %s: link do cache morreu (%s); buscando outro", pagina, status)
             await self.cache.apagar(pagina)
-            url_pagina = url_pagina or guardado.get("url")
-        if not url_pagina:
-            dominio = await self.cache.meta("dominio") or RC_DOMINIO
-            url_pagina = dominio.rstrip("/") + (pagina if pagina.startswith("/") else "/" + pagina)
         reparo = None
         try:
-            links = await self.busca.links(url_pagina)
-        except ErroPlayer as e:
+            links, url_pagina = await self.dominios.executar(pagina, self._tentar_links)
+        except (ErroPlayer, ErroDominio) as e:
+            if isinstance(e, ErroDominio) and e.so_fora_do_site:
+                # A página nem abriu no site: reabrir o Chrome não muda nada.
+                return self._registrar(pagina, "erro", ms(), erro=str(e))
+            url_pagina = await self.dominios.principal() + (pagina if pagina.startswith("/") else "/" + pagina)
+            erro = e if isinstance(e, ErroPlayer) else ErroPlayer(str(e))
             try:
-                links, reparo = await self._buscar_com_reparo(pagina, url_pagina, e)
+                links, reparo = await self._buscar_com_reparo(pagina, url_pagina, erro)
             except ErroBusca as e2:
                 return self._registrar(pagina, "erro", ms(), erro=str(e2), reparo=getattr(e2, "reparo", None))
         except ErroBusca as e:
@@ -116,6 +122,17 @@ class Servico:
             return self._registrar(pagina, "erro", ms(), erro=f"o link novo não entregou vídeo ({status})", reparo=reparo)
         await self.cache.guardar(pagina, links, url_pagina)
         return self._registrar(pagina, "novo", ms(), links=links, reparo=reparo)
+
+    async def _tentar_links(self, url_pagina):
+        """Uma tentativa num domínio: (links, resposta, falhou_por_dominio). Um player que não deu
+        vídeo num site que abriu normalmente sobe como ErroPlayer (vai para o reparo)."""
+        try:
+            links, resposta = await self.busca.links(url_pagina)
+            return links, resposta, False
+        except ErroPlayer as e:
+            if e.dominio:
+                return e, e.resposta, True
+            raise
 
     async def _buscar_com_reparo(self, pagina, url_pagina, erro):
         """O player não pediu o vídeo: reabre o Chrome (no máximo uma vez a cada INTERVALO_REPARO_S)
@@ -137,7 +154,7 @@ class Servico:
                     self.ultimo_reparo_horario = time.strftime("%Y-%m-%d %H:%M:%S")
                 reparo = "reabriu o Chrome"
         try:
-            return await self.busca.links(url_pagina), reparo
+            return (await self.busca.links(url_pagina))[0], reparo
         except ErroBusca as e:
             novo = ErroBusca(f"{e} (mesmo depois de reabrir o Chrome)")
             novo.reparo = reparo
@@ -169,11 +186,13 @@ class Servico:
             corpo = await request.json()
         except (ValueError, json.JSONDecodeError):
             return web.json_response({"ok": False, "erro": "corpo não é JSON"}, status=400)
+        # O 'url' que o iptv manda é ignorado: o domínio é decidido aqui (dominio.py).
         pagina = str(corpo.get("pagina") or "").strip()
-        url_pagina = str(corpo.get("url") or "").strip()
-        if not pagina or not url_pagina.startswith(("http://", "https://")):
-            return web.json_response({"ok": False, "erro": "precisa de 'pagina' e 'url'"}, status=400)
-        tarefa = self.obter(pagina, url_pagina)
+        if not pagina.startswith("/"):
+            return web.json_response({"ok": False, "erro": "precisa de 'pagina' (caminho começando com /)"}, status=400)
+        return await self._responder_aos_poucos(request, self.obter(pagina), pagina)
+
+    async def _responder_aos_poucos(self, request, tarefa, nome):
         # Como no bot: o cabeçalho sai já e um espaço a cada 20 s evita o 524 da Cloudflare.
         resposta = web.StreamResponse(headers={"Content-Type": "application/json; charset=utf-8"})
         try:
@@ -187,8 +206,56 @@ class Servico:
             await resposta.write(json.dumps(resultado).encode())
             await resposta.write_eof()
         except (ConnectionResetError, aiohttp.ClientConnectionResetError):
-            log.info("quem pediu o mp4 desconectou antes do fim: %s (a busca continua)", pagina)
+            log.info("quem pediu desconectou antes do fim: %s (a busca continua)", nome)
         return resposta
+
+    async def rota_pagina(self, request):
+        """Abre uma página do site pelo bot, no domínio da vez: {caminho, pedido} -> resposta do bot
+        com 'dominio'. Se o domínio não servir, tenta o outro e descobre o novo (dominio.py)."""
+        if not self._autorizado(request):
+            return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
+        try:
+            corpo = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return web.json_response({"ok": False, "erro": "corpo não é JSON"}, status=400)
+        caminho = str(corpo.get("caminho") or "").strip()
+        pedido = corpo.get("pedido") or {}
+        if not caminho.startswith("/") or not isinstance(pedido, dict):
+            return web.json_response({"ok": False, "erro": "precisa de 'caminho' (começando com /) e 'pedido'"}, status=400)
+        tarefa = asyncio.create_task(self._pagina(caminho, pedido))
+        return await self._responder_aos_poucos(request, tarefa, caminho)
+
+    async def _pagina(self, caminho, pedido):
+        pedido = {"hostEsperado": HOST_ESPERADO, **pedido}
+        if not any(a.get("quando") == "desafio" for a in pedido.get("acoes") or []):
+            pedido["acoes"] = [ACAO_DESAFIO, *(pedido.get("acoes") or [])]
+
+        async def tentar(url):
+            resposta = await self.busca.navegar({**pedido, "url": url})
+            return resposta, resposta, falha_de_dominio(resposta)
+
+        try:
+            resposta, url = await self.dominios.executar(caminho, tentar)
+        except ErroDominio as e:
+            resposta = e.ultimo if isinstance(e.ultimo, dict) else {"ok": False, "status": "erro", "erros": []}
+            resposta = {**resposta, "ok": False, "erros": [*(resposta.get("erros") or []), str(e)]}
+            url = None
+        except ErroBusca as e:
+            return {"ok": False, "status": "erro", "erros": [str(e)], "rede": [], "acoes": []}
+        resposta["dominio"] = "/".join(url.split("/", 3)[:3]) if url else None
+        return resposta
+
+    async def rota_dominios(self, request):
+        """GET: os dois domínios e a última troca. POST {dominio1?, dominio2?}: grava (painel)."""
+        if not self._autorizado(request):
+            return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
+        if request.method == "POST":
+            try:
+                corpo = await request.json()
+                await self.dominios.gravar(corpo.get("dominio1"), corpo.get("dominio2"))
+            except (ValueError, json.JSONDecodeError) as e:
+                return web.json_response({"ok": False, "erro": str(e)}, status=400)
+        return web.json_response({"ok": True, **await self.dominios.ler()})
 
     async def rota_proxy(self, request):
         url = request.query.get("url", "")
@@ -213,7 +280,7 @@ class Servico:
                 log.info("stream %s: origem %d; buscando link novo", pagina, origem_resp.status)
                 origem_resp.release()
                 origem_resp = None
-                resultado = await asyncio.shield(self.obter(pagina, ""))
+                resultado = await asyncio.shield(self.obter(pagina))
                 if not resultado["ok"]:
                     return web.Response(status=502, text=f"sem link novo: {resultado['erro']}")
                 origem_resp = await self.origem.abrir(resultado["links"][0], extra)
@@ -261,7 +328,7 @@ class Servico:
         pagina = await self.cache.mais_recente()
         if not pagina:
             return web.json_response({"ok": False, "erro": "nenhum vídeo guardado ainda: abra um filme ou episódio na TV primeiro"})
-        resultado = await asyncio.shield(self.obter(pagina, ""))
+        resultado = await asyncio.shield(self.obter(pagina))
         if resultado["ok"]:
             url = resultado["links"][0]
             resultado["url"] = f"{URL_PUBLICA}/proxy-rc?" + urlencode({"url": url, "pagina": pagina, "sig": assinatura(url, pagina)})
@@ -280,6 +347,7 @@ class Servico:
             "ipPublico": self.ip,
             "ipDesde": self.ip_desde,
             "ultimoReparo": self.ultimo_reparo_horario,
+            "dominios": await self.dominios.ler(),
             "ultimos": list(self.historico),
         })
 
@@ -310,8 +378,12 @@ def criar_app():
     app.router.add_route("HEAD", "/proxy-rc", servico.rota_proxy)
     app.router.add_get("/saude", servico.rota_saude)
     app.router.add_post("/v1/teste", servico.rota_teste)
+    app.router.add_post("/v1/pagina", servico.rota_pagina)
+    app.router.add_get("/v1/dominios", servico.rota_dominios)
+    app.router.add_post("/v1/dominios", servico.rota_dominios)
 
     async def ao_iniciar(_app):
+        await servico.dominios.iniciar()
         _app["vigia_ip"] = asyncio.create_task(servico.vigiar_ip())
 
     async def ao_parar(_app):

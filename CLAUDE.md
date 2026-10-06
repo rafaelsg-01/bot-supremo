@@ -128,6 +128,10 @@ declarativas** ("se o elemento X estiver na tela, clicar nele").
 - `inspecionar` (opcional, para depuração): um seletor. A resposta ganha `inspecao` com a medição
   crua de todos os frames no fim do pedido (URLs dos frames, iframes, os primeiros `input`/`button`
   de cada frame e o alvo). Serve para descobrir seletores.
+- `hostEsperado` (opcional, regex): a página tem que **terminar** num host que case. Se o frame
+  principal completar fora dele e ficar 3 s sem navegar de novo (ou o pedido acabar lá), o pedido
+  termina na hora com `status: "erro"` e o erro `a página saiu do site: <url>`. Hops no caminho
+  (google.com/url redirecionando) não contam. Serve para um domínio morto falhar em segundos.
 - `marcarRede` (opcional, para medir): uma regex. Cada request que casar vira marco na `linhaDoTempo`
   (início e fim, com status). Não muda `rede` nem `esperarRede`.
 - `cabecalhos: true` (opcional, para depuração, exige `esperarRede`): cada item de `rede` ganha
@@ -160,11 +164,13 @@ Resposta (sempre HTTP 200 quando o pedido rodou; 400 para entrada inválida, 401
   "erros": [],
   "duracaoMs": 5230,
   "etapas": { "fila": 0, "navegar": 3100, "desafio": 0, "carregar": 1900, "acoes": 200, "rede": 30 },
-  "linhaDoTempo": [{ "ms": 12, "marco": "vez" }, { "ms": 1450, "marco": "commit", "url": "..." }]
+  "linhaDoTempo": [{ "ms": 12, "marco": "vez" }, { "ms": 1450, "marco": "commit", "url": "..." }],
+  "navegacao": ["https://www.google.com/url?...", "https://notfound.vg/"]
 }
 ```
 
 - `etapas.fila`: quanto o pedido esperou na fila antes de começar (fica fora de `duracaoMs`).
+- `navegacao`: as URLs por onde o frame principal passou (requests do documento e commits, sem cortar).
 - `linhaDoTempo`: marcos do pedido em ms desde que ele chegou à API (fila, digitação, commit,
   iframes, clique, requests do `marcarRede`, fim). O log do bot tem a mesma coisa numa linha
   `tempo <url> ...`. Serve para achar onde o tempo vai.
@@ -269,7 +275,13 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
      a cada 10 min; seção 12 do MANUAL);
    - `GET /proxy-rc?url=&pagina=&sig=`: repassa o vídeo, pelo IPv6 do WARP, para a TV e o site.
      Aceita qualquer URL assinada pelo iptv (HMAC com o `VIDEO_TOKEN`), sem lista de domínios;
-   - `GET /saude`: streams, cache, últimas buscas e o IP público do WARP.
+   - `POST /v1/pagina` (`{caminho, pedido}`): abre uma página do site pelo bot no domínio da vez (o
+     iptv usa para listas e séries);
+   - **domínio do site** (`video/dominio.py`, desde 2026-10-06): dois campos no painel, o 1 só do
+     dono e o 2 automático. Se a página sair do site, tenta o outro; se os dois falharem, abre a raiz
+     do domínio velho e adota o `redecanais.<outro>` para onde ela leva (só se mudou o que vem depois
+     do primeiro ponto). O iptv não decide mais o domínio. Regras na seção 5 do MANUAL;
+   - `GET /saude`: streams, cache, últimas buscas, domínios e o IP público do WARP.
    Detalhes, medições e diagnóstico na seção 12 do MANUAL.
 
 ## Infraestrutura

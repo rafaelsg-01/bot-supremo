@@ -30,7 +30,7 @@ Botões, por nível (a página mostra a ordem por sintoma). Todos testados pela 
 | Nível | Botão | O que faz | Tempo |
 |---|---|---|---|
 | Testar | Testar o vídeo | link do episódio usado por último (testa ou busca outro) + 4 MB baixados pela internet | 2–30 s |
-| Testar | Testar o site | o bot abre `/final_mapa.txt` | 2–10 s |
+| Testar | Testar o site | abre `/final_mapa.txt` no domínio da vez (pelo serviço de vídeo, que troca de domínio se preciso) | 2–10 s |
 | Leve | Reiniciar o túnel | `bot-supremo-tunel` (responde antes, porque o painel também passa por ele) | ~10 s |
 | Leve | Reiniciar o vídeo | `bot-supremo-video` (quem assiste precisa dar play de novo) | ~5 s |
 | Leve | Reabrir o Chrome | fecha e abre o Chrome do bot | ~15 s |
@@ -46,6 +46,11 @@ Botões, por nível (a página mostra a ordem por sintoma). Todos testados pela 
 **Reparo automático (2026-10-01):** quando o player não pede o vídeo (`nenhuma request casou ...`), o
 serviço de vídeo faz sozinho o "Reabrir o Chrome" e tenta a busca mais uma vez, no máximo uma vez a cada
 10 min (detalhes na seção 12). O cartão "Vídeo" mostra quando foi a última vez.
+
+**Domínio do site (2026-10-06):** cartão com dois campos. O **1** só o dono escreve (pode ficar vazio);
+o **2** o sistema preenche sozinho quando o site muda de endereço (e o dono também pode). O sistema
+tenta o 1 e, se ele não servir, o 2. Mostra a última troca automática e avisa no semáforo quando o 1
+está sendo pulado. Como funciona: seção 5.
 
 "Pausar o bot" segura os pedidos (até 30 min) para mexer na tela sem conflito. O semáforo também
 avisa quando `video.` ou `bot.iptv01.asia` não respondem pela internet (checado a cada 60 s) e quando a
@@ -68,7 +73,7 @@ TV / celular
                           └─> container bot-supremo (usa a rede do container warp)
                                 ├─ serviço Python (fila, xdotool, regras do pedido)
                                 ├─ Chrome real + extensão (lê a página e a rede)
-                                └─> redecanais.press, saindo pela Cloudflare WARP
+                                └─> redecanais.<domínio da vez>, saindo pela Cloudflare WARP
 ```
 
 Na hora de **tocar**, a TV recebe `https://video.iptv01.asia/proxy-rc?url=<link>&pagina=<página>&sig=<assinatura>`
@@ -93,7 +98,7 @@ responde 302 para o `video.iptv01.asia`. Detalhes na seção 12.
 | Código do iptv | `../projeto-iptv` (Worker `iptv-self-2`, deploy com `npx wrangler deploy --env production`) |
 | Token do bot no iptv | secret `botSupremoToken` do Worker; para `npm run dev`, em `.dev.vars` (fora do git) |
 | Token do vídeo no iptv | secret `videoRcToken` do Worker = `VIDEO_TOKEN` do notebook (os dois têm que ser iguais) |
-| Domínio do site | `rcDominio` no `wrangler.toml` do iptv (todos os envs). Trocar o domínio = mudar só isso |
+| Domínio do site | no notebook: `dominio1`/`dominio2` no SQLite do serviço de vídeo, editados no painel (cartão "Domínio do site"). Troca sozinho (seção 5). `rcDominio` do iptv é só reserva |
 
 ## 3. A vida de um pedido no bot
 
@@ -150,9 +155,9 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
 
 | Função | Pedido ao bot | Cache (KV) |
 |---|---|---|
-| `Function_getMovieList` / `Function_getSerieList` | `url` = `/final_mapafilmes.txt` / `/final_mapa.txt` | listas cruas `movies_list_rc` / `series_list_rc`, renovadas em segundo plano depois de 12 h. Lista vazia (falha) **não** substitui a boa |
-| `Function_getSerieSingle` | `url` = página `/browse-<serie>-videos-1-date.html`, `esperarPagina: 'completa'`; sem temporadas, repete com `quieta` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
-| `Function_getLinkMp4ListComCache` | não fala com o bot: chama `POST video.iptv01.asia/v1/mp4 {pagina, url}`. Quem pede ao bot é o serviço de vídeo do notebook (`video/busca.py`), com o pedido **rápido** (`esperarPagina: 'nao'` + clicar `#submit` no frame `player3/server.php` com `frameCompleto` e `confirmarRede: player3/serverforms[.]api`, até 3 cliques, + `esperarRede` com a URL do vídeo) e a **reserva** (só se o player não reagiu: 15 s parado e depois o play) | **no notebook** (SQLite, sem prazo, testado a cada entrega). Nada no KV |
+| `Function_getMovieList` / `Function_getSerieList` | `navegarSite(env, '/final_mapafilmes.txt' / '/final_mapa.txt')`: `POST video.iptv01.asia/v1/pagina`, que escolhe o domínio e chama o bot | listas cruas `movies_list_rc` / `series_list_rc`, renovadas em segundo plano depois de 12 h. Lista vazia (falha) **não** substitui a boa |
+| `Function_getSerieSingle` | `navegarSite` com a página `/browse-<serie>-videos-1-date.html`, `esperarPagina: 'completa'`; sem temporadas, repete com `quieta` | `movie_info_<serie>_rc`, 3 dias. Resultado sem temporadas (falha) **não** é guardado |
+| `Function_getLinkMp4ListComCache` | não fala com o bot: chama `POST video.iptv01.asia/v1/mp4 {pagina}` (o `url` que ainda vai junto é ignorado). Quem pede ao bot é o serviço de vídeo do notebook (`video/busca.py`), com o pedido **rápido** (`esperarPagina: 'nao'` + clicar `#submit` no frame `player3/server.php` com `frameCompleto` e `confirmarRede: player3/serverforms[.]api`, até 3 cliques, + `esperarRede` com a URL do vídeo) e a **reserva** (só se o player não reagiu: 15 s parado e depois o play) | **no notebook** (SQLite, sem prazo, testado a cada entrega). Nada no KV |
 
 - Os 4 lugares que pedem vídeo (`/get-list-link-mp4`, `/get-list-link-mp4-rc`, `src/tv/movie.ts`,
   `src/tv/episode.ts`) usam `Function_getLinkMp4ListComCache` e caem no mesmo cache do notebook (a
@@ -169,10 +174,28 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
   uma vírgula quebra tudo. Tudo acima é código do servidor (Worker). Não mexa no cliente `/tv` sem
   necessidade e sem testar na TV.
 
-## 5. O que se sabe do Rede Canais (redecanais.press)
+## 5. O que se sabe do Rede Canais (redecanais.ae em 2026-10-06)
 
-- **Domínio muda de tempos em tempos** (`.af`, `.press`…). Se tudo começar a falhar com o site "fora",
-  confira se o domínio mudou e troque `rcDominio` no `wrangler.toml`.
+- **Domínio muda de tempos em tempos** (`.af`, `.press`, `.ae`…), e **o sistema troca sozinho**
+  (desde 2026-10-06, `video/dominio.py`). Como o .press morreu: os caminhos fundos
+  (`/episodio_x.html`) passam por `www.google.com/url` e terminam em `notfound.vg/`; alguns (`/final_mapa.txt`)
+  vão para `redecanais.ae/<caminho em hex>`; e a **raiz** (`https://redecanais.press/`) vai para
+  `https://redecanais.ae/`.
+  - Todo pedido ao site leva `hostEsperado: "(^|[.])redecanais[.]"`: se a página parar fora do site, o
+    bot desiste em segundos (antes, 40–90 s esperando o `#submit`).
+  - **Falha de domínio** = saiu do site, `statusHttp` ≥ 400 ou uma ação `clicar` sem `seExistir` não
+    achou o elemento. Player que reagiu e não deu vídeo **não** conta (é o limite por IP).
+  - Ordem: domínio 1 → domínio 2. Se os dois falharem, procura um `redecanais.<outro>` por onde a
+    página passou (`navegacao`/`urlFinal`) e, se não achar, **abre a raiz** do domínio que falhou e vê
+    aonde ela leva. Só aceita se mudou apenas o que vem depois do primeiro ponto (`redecanais.press` →
+    `redecanais.ae`; nunca `google.com`, `notfound.vg` ou `redecanais-oficial.chatango.com`). Grava no
+    domínio 2 e tenta de novo.
+  - Se a página **funcionou** mas terminou em outro `redecanais.*`, esse vira o domínio 2 também.
+  - Nunca volta sozinho para um domínio abandonado (`dominios_velhos` no SQLite). O dono pode.
+  - Depois de uma falha de domínio no 1, ele é pulado por 30 min (o painel avisa). Nunca é apagado
+    sozinho: o dono apaga quando o 2 estiver bom.
+  - Se nada funcionar: o erro diz "preencha o domínio no painel". Descubra o domínio (abra o antigo no
+    PC pelo WARP ou procure o canal oficial) e escreva no campo 1 ou 2.
 - O site tem **service worker** que atende as navegações. Por isso o status HTTP da página às vezes
   só aparece nas requests da aba `-1` (o serviço já trata isso).
 - **Listas:** `/final_mapafilmes.txt` e `/final_mapa.txt`.
@@ -215,7 +238,7 @@ ssh servidor-caseiro "docker logs --since 30m bot-supremo 2>&1 | grep -E 'pedido
 
 # 3. Um pedido na mão
 curl -s -A t -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"url":"https://redecanais.press/final_mapa.txt","html":false}' https://bot.iptv01.asia/v1/navegar
+  -d '{"url":"https://redecanais.ae/final_mapa.txt","html":false}' https://bot.iptv01.asia/v1/navegar
 
 # 4. Foto da tela do Chrome (PNG)
 curl -s -A t -H "Authorization: Bearer $TOKEN" https://bot.iptv01.asia/v1/tela -o tela.png
@@ -250,7 +273,8 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | `[bot-supremo] reserva:` no `wrangler tail` | o pedido rápido não fez o player reagir e o iptv usou o pedido antigo | normal de vez em quando. Se for sempre, ver a linha `tempo` do bot (`frame_completo`, `clicou`, `sem_reacao`) |
 | `aviso: a digitação abriu ...` em `erros` | uma tecla se perdeu (ex.: alguém mexeu no teclado do notebook) | nada: o bot digita de novo sozinho. Se virar frequente, subir `ATRASO_DIGITACAO_MS` no `.env` |
 | `o seletor '#submit' não apareceu` | player demorou ou mudou | rodar um pedido com `inspecionar: "#submit"`, ver `/v1/tela`. Se o site mudou o player, ajustar as ações em `Function_getLinkMp4List` |
-| Todas as páginas com `statusHttp` 5xx (521/522) | site fora ou domínio mudou | abrir o site no PC. Se mudou de domínio, trocar `rcDominio` e fazer deploy do iptv |
+| Todas as páginas com `statusHttp` 5xx (521/522) | site fora ou domínio mudou | o sistema tenta o outro domínio e descobre o novo sozinho (seção 5). Se o painel disser "preencha o domínio", abra o site no PC e escreva o novo no cartão "Domínio do site" |
+| `o seletor '#submit' não apareceu` com `a página saiu do site: notfound.vg/` | domínio mudou (06/10: .press) | automático (seção 5). Reabrir o Chrome não resolve |
 | `status: "desafio"` | o Turnstile não passou | ver `/v1/tela`. Se a caixa mudou, ajustar `Const_acaoDesafio` em `bot_supremo.ts` |
 | 524 no iptv | resposta sem começar em ~120 s | não deveria mais acontecer (item 4 da seção 3). Se voltar, conferir se a resposta continua em streaming |
 | 429 "fila cheia" | mais de 30 pedidos acumulados | algo está chamando em loop. Achar quem no `wrangler tail` |
@@ -444,7 +468,7 @@ Google. Agora o bot confere o endereço no início da navegação e digita de no
 se o Chrome travar ou reiniciar, quem está assistindo continua.
 
 **Rotas** (`video/app.py`):
-- `POST /v1/mp4` (Bearer `VIDEO_TOKEN`), `{"pagina": "/ep.html", "url": "https://<domínio>/ep.html"}` →
+- `POST /v1/mp4` (Bearer `VIDEO_TOKEN`), `{"pagina": "/ep.html"}` (um `url` junto é ignorado) →
   `{"ok", "links": [...], "origem": "cache" | "novo", "ms"}`. Um pedido por página ao mesmo tempo; a
   busca termina e fica no cache mesmo se quem pediu desistir. A resposta começa na hora e recebe um
   espaço a cada 20 s (como o bot).
@@ -452,8 +476,12 @@ se o Chrome travar ou reiniciar, quem está assistindo continua.
   `sig` = HMAC-SHA256(`VIDEO_TOKEN`, `url + "\n" + pagina`), 32 primeiros hex (`urlVideoRc` no iptv).
   **Aceita qualquer URL assinada** (o domínio do site muda). Se a origem der 403/404/410 e houver
   `pagina`, pega um link novo e continua.
+- `POST /v1/pagina` (Bearer `VIDEO_TOKEN`), `{"caminho": "/final_mapa.txt", "pedido": {...}}`: o
+  `pedido` do bot sem `url`. Roda no domínio da vez, com a troca de domínio (seção 5), e devolve a
+  resposta do bot mais `dominio`. Põe a ação do desafio e o `hostEsperado` se não vierem.
+- `GET|POST /v1/dominios` (Bearer `VIDEO_TOKEN`): lê ou grava `{dominio1, dominio2}` (o painel usa).
 - `GET /saude` (Bearer ou `?token=`): streams, links guardados, buscas em andamento, últimas buscas,
-  IP público do WARP e desde quando (o log anota quando muda).
+  domínios, IP público do WARP e desde quando (o log anota quando muda).
 
 **Reparo automático** (`_buscar_com_reparo` em `video/app.py`, desde 2026-10-01): se o bot responder mas
 o player não pedir nenhum vídeo (`ErroPlayer` em `video/busca.py`), o serviço chama
@@ -464,6 +492,13 @@ for o limite do site ou o site fora, reabrir não ajuda e cada tentativa a mais 
 rede com o bot (bot fora do ar) não disparam o reparo. O histórico (`ultimos`) marca `reparo` e o
 `/saude` mostra `ultimoReparo`. Motivo: em 2026-10-01 00:34–00:39 quatro buscas falharam assim e só
 voltaram depois de clicar em "Reabrir o Chrome" no painel.
+
+**Domínios** (`video/dominio.py`): tabela `meta` do mesmo SQLite (`dominio1`, `dominio2`,
+`dominio_troca`, `dominios_velhos`). Regras na seção 5. Logs: `falha de domínio em ...` e `DOMÍNIO NOVO: X -> Y (motivo)`.
+
+**Timeouts da busca (2026-10-06, o dono pediu folga):** pedido rápido com `#submit` até 90 s, vídeo até
+60 s, total 200 s; reserva com `#submit` até 60 s, vídeo até 60 s, total 240 s. Domínio morto não espera
+isso tudo: o `hostEsperado` corta em segundos.
 
 **Cache** (`video/cache.py`): SQLite em `dados/video/cache.sqlite`, chave = página (sem domínio), sem
 prazo. A cada entrega testa o 1º link (1 byte). 200/206 = entrega; qualquer outra coisa = apaga e busca

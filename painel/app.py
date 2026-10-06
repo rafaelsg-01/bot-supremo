@@ -38,7 +38,6 @@ VIDEO_TOKEN = os.environ.get("VIDEO_TOKEN", "")
 URL_BOT_PUBLICA = os.environ.get("PAINEL_URL_BOT_PUBLICA", "https://bot.iptv01.asia")
 URL_VIDEO_PUBLICA = os.environ.get("PAINEL_URL_VIDEO_PUBLICA", "https://video.iptv01.asia")
 URL_VNC = os.environ.get("PAINEL_URL_VNC", "ws://warp:6080/websockify")
-RC_DOMINIO = os.environ.get("RC_DOMINIO", "https://redecanais.ae")
 IMAGEM = os.environ.get("PAINEL_IMAGEM", "ghcr.io/rafaelsg-01/bot-supremo:latest")
 DIR_NOVNC = "/usr/share/novnc"
 
@@ -287,6 +286,10 @@ def _alertas(notebook, bot, containers, video, publico):
             else:
                 dica = "Tente Testar o vídeo; se repetir, Testar o site."
             a.append(f"A última busca de vídeo deu erro ({ultimo.get('horario', '')[11:16]}): {ultimo.get('erro')}. {dica}")
+        dom = video.get("dominios") or {}
+        if dom.get("pulandoDominio1"):
+            a.append(f"O domínio 1 ({dom.get('dominio1')}) não está funcionando; o sistema está usando o domínio 2 "
+                     f"({dom.get('dominio2')}). Se o 2 estiver tocando normal, apague o domínio 1.")
     # Por dentro funciona, por fora não: é o túnel (ou a Cloudflare).
     if not (publico.get("video") or {}).get("ok", True) and "semResposta" not in video:
         a.append("O endereço do vídeo (video.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")
@@ -451,13 +454,17 @@ async def api_acao(request):
             await docker.reiniciar(CONTAINER_BOT)
             return web.json_response({"ok": True, "mensagem": "Bot reiniciado. Ele volta em uns 30 s."})
         if acao == "testar-site":
+            # Pelo serviço de vídeo: usa o domínio da vez e troca de domínio se ele não servir.
             inicio = time.monotonic()
-            r = await _post_bot(sessao, "/v1/navegar",
-                                {"url": RC_DOMINIO + "/final_mapa.txt", "html": False, "timeoutMs": 60000},
-                                timeout_s=600)
+            async with sessao.post(URL_VIDEO + "/v1/pagina", headers={"Authorization": f"Bearer {VIDEO_TOKEN}"},
+                                   json={"caminho": "/final_mapa.txt", "pedido": {"html": False, "timeoutMs": 60000}},
+                                   timeout=aiohttp.ClientTimeout(total=600)) as resp:
+                texto = (await resp.text()).strip()
+                r = json.loads(texto) if texto.startswith("{") else {"erros": [f"HTTP {resp.status}: {texto[:200]}"]}
             s = round(time.monotonic() - inicio)
             if r.get("ok"):
-                msg = f"O site abriu normal ({r.get('statusHttp')}) em {s} s, contando a espera na fila."
+                msg = (f"O site abriu normal em {r.get('dominio')} ({r.get('statusHttp')}) em {s} s, "
+                       "contando a espera na fila.")
             else:
                 msg = f"O site NÃO abriu: {r.get('status')} {r.get('statusHttp') or ''} {' '.join(r.get('erros') or [])}"
             return web.json_response({"ok": bool(r.get("ok")), "mensagem": msg})
@@ -493,6 +500,25 @@ async def api_acao(request):
 # ---------------------------------------------------------------------------
 # Tela (noVNC): os arquivos saem da própria imagem; o websocket é repassado ao VNC do bot.
 # ---------------------------------------------------------------------------
+
+
+async def api_dominios(request):
+    """Grava os domínios do site (no serviço de vídeo). Corpo: {dominio1?, dominio2?}."""
+    if request.headers.get("X-Painel") != "1":
+        raise web.HTTPForbidden()
+    corpo = await request.json()
+    dados = {k: str(corpo[k]) for k in ("dominio1", "dominio2") if k in corpo}
+    log.warning("domínios gravados no painel: %s (ip %s)", dados, _ip(request))
+    try:
+        async with request.app["sessao"].post(URL_VIDEO + "/v1/dominios", json=dados,
+                                              headers={"Authorization": f"Bearer {VIDEO_TOKEN}"},
+                                              timeout=aiohttp.ClientTimeout(total=15)) as r:
+            resposta = await r.json()
+    except (aiohttp.ClientError, OSError, asyncio.TimeoutError, ValueError) as e:
+        return web.json_response({"ok": False, "mensagem": f"O serviço de vídeo não respondeu: {e}"})
+    if not resposta.get("ok"):
+        return web.json_response({"ok": False, "mensagem": resposta.get("erro") or "não gravou"})
+    return web.json_response({"ok": True, "mensagem": "Domínio gravado. Vale a partir do próximo pedido.", **resposta})
 
 
 async def tela_websocket(request):
@@ -552,6 +578,7 @@ def criar_app():
     app.router.add_get("/api/log", api_log)
     app.router.add_get("/api/tela", api_tela)
     app.router.add_post("/api/acao/{acao}", api_acao)
+    app.router.add_post("/api/dominios", api_dominios)
     app.router.add_get("/tela/websockify", tela_websocket)
     if os.path.isdir(DIR_NOVNC):
         app.router.add_static("/tela/", DIR_NOVNC)
