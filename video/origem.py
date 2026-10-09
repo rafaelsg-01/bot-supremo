@@ -6,7 +6,9 @@ gera o link pelo IPv6 do WARP, então o vídeo também tem que ser pedido pelo I
 - o DNS do WARP não devolve o IPv6 de hosts com nome esquisito (`-_kerberos-...null-null.shop`),
   só o IPv4, que recebe 404. Por isso o endereço vem do DNS por HTTPS da Cloudflare quando precisa;
 - o `ssl` do Python recusa esse nome, embora o certificado seja válido para `*.null-null.shop`.
-  Por isso a cadeia é verificada normalmente e o nome é conferido aqui, à mão.
+  Por isso a cadeia é verificada normalmente e o nome é conferido aqui, à mão;
+- desde 2026-10-09 o servidor responde 404 ("Not Found") se o pedido vier sem `Referer` (qualquer
+  valor serve, mas mandamos o do domínio da vez, igual ao Chrome).
 """
 import asyncio
 import ipaddress
@@ -26,7 +28,8 @@ log = logging.getLogger("video.origem")
 DOH = "https://cloudflare-dns.com/dns-query"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/154.0.0.0 Safari/537.36")
-# Os headers que o player do site sempre mandou. Hoje o servidor nem confere, mas não custam nada.
+# Os headers que o player do site sempre mandou. Os dois primeiros o servidor não confere; o
+# `Referer` (posto em `abrir`, com o domínio da vez) ele confere desde 2026-10-09.
 CABECALHOS_SITE = {
     "h31ffadrg3bb7": "h31ffadrg3fj345a",
     "x-requested-with": "RC-Site-Requests",
@@ -134,8 +137,9 @@ def _nome_confere(host, cert):
 class Origem:
     """Uma sessão por família de IP (a família vem do `ip=` de cada link)."""
 
-    def __init__(self):
+    def __init__(self, site=None):
         self._sessoes = {}
+        self._site = site  # async () -> 'https://redecanais.xx', o domínio da vez
         self._tls = _contexto_tls()
 
     def _sessao(self, familia):
@@ -154,6 +158,8 @@ class Origem:
     async def abrir(self, url, extra=None):
         """GET no link, pelo WARP. Devolve a resposta aberta (quem chama fecha com release())."""
         cab = dict(CABECALHOS_SITE)
+        site = await self._site() if self._site else "https://redecanais.ae"
+        cab.update({"Origin": site, "Referer": site + "/"})
         cab.update(extra or {})
         sessao = self._sessao(familia_do_link(url))
         resp = await sessao.get(URL(url, encoded=True), headers=cab, allow_redirects=True, max_redirects=3)

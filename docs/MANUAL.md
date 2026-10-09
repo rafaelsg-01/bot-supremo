@@ -212,6 +212,9 @@ Funções em [../projeto-iptv/src/function_rc.ts](../../projeto-iptv/src/functio
   ou o `ip=` trocado dão `404 Not Found`. Por isso o vídeo passa pelo notebook, e **pelo IPv6** (o DNS
   do WARP não devolve o IPv6 desses hosts; o serviço usa DNS por HTTPS). Os headers antigos
   (`h31ffadrg3bb7`, `x-requested-with`) deixaram de ser conferidos, mas o serviço ainda manda.
+  **Desde 2026-10-09 o proxy exige `Referer`**: sem ele, `404 Not Found` (qualquer valor serve; o
+  serviço manda `Origin`/`Referer` do domínio da vez, como o Chrome). O link também ganhou `ipv6=` e
+  `ip_bind=`.
   O mp4 de dentro recusa conexão direta (520).
 - O host do proxy (`-_kerberos-...null-null.shop`) tem um nome que o `ssl` do Python recusa, embora o
   certificado `*.null-null.shop` seja válido: o serviço confere o nome à mão (`video/origem.py`).
@@ -282,6 +285,7 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | Lista com acentos quebrados (`NÃºmeros`) | `textoDoPre` não desfez a codificação | conferir o `<pre>` cru que o bot devolve |
 | Depois de reboot, bot sem rede | o `warp` foi recriado pelo `~/start.sh` | o `atualizar.sh` recria o nosso container em até 2 min |
 | IP do WARP banido (403 em tudo) | ban | refazer o registro do WARP (ver CLAUDE.md, com backup de `~/content-warp/data/`) |
+| Vídeo volta `erro` com `o link novo não entregou vídeo (404)`, mas a tela mostra o filme tocando | o proxy do site passou a conferir algum header (09/10: `Referer`) | capturar o link com `cabecalhos: true` e testar pelo container de vídeo, header por header, até achar o que falta (`video/origem.py`) |
 | Vídeo não abre, `/proxy-rc` 404 | link preso a outro IP (o IP do WARP mudou) | nada: o serviço testa antes de entregar e busca outro. Na TV, a URL leva a página e se recupera sozinha |
 | Vídeo não abre, `video.iptv01.asia` 403 "assinatura inválida" | `videoRcToken` do Worker diferente do `VIDEO_TOKEN` do notebook | acertar o secret (`wrangler secret put videoRcToken --env production`) |
 | Vídeo não abre, painel "serviço de vídeo não está respondendo" | container `bot-supremo-video` caído ou sem rede (warp recriado) | o `atualizar.sh` recria em até 2 min; `docker logs bot-supremo-video` |

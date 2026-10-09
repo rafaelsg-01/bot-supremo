@@ -64,10 +64,10 @@ def assinatura(url, pagina):
 
 class Servico:
     def __init__(self):
-        self.origem = Origem()
         self.cache = Cache(ARQ_CACHE)
         self.busca = Busca(URL_BOT, BOT_TOKEN)
         self.dominios = Dominios(self.cache, self.busca, RC_DOMINIO)
+        self.origem = Origem(site=self.dominios.principal)
         self.em_andamento = {}  # pagina -> tarefa (um pedido por página ao mesmo tempo)
         self.historico = collections.deque(maxlen=20)
         self.streams = 0
