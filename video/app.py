@@ -10,6 +10,8 @@ ser baixado daqui, e este serviço faz duas coisas:
   busca um link novo e continua.
 - POST /v1/pagina: abre uma página do site pelo bot (listas, séries) no domínio da vez.
 - GET/POST /v1/dominios: os dois domínios do site (painel). Ver dominio.py.
+- GET /tv?k=, /tv/video, /tvv/<nome>: página de teste da TV antiga (sem JavaScript). A TV Samsung 2012
+  só toca o vídeo por http:// (o player dela não conecta no https daqui). MANUAL, seção 12, "TV antiga".
 
 O domínio do site é decidido aqui (dominio.py), não pelo iptv: se ele mudar, o serviço descobre
 o novo sozinho e grava no dominio2.

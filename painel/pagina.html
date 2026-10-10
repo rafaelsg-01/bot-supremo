@@ -264,6 +264,7 @@ async function atualizarEstado() {
     const NOMES_ORIGEM = { cache: 'do cache (testado)', novo: 'buscado agora', erro: 'erro' };
     $('video').innerHTML = linhas([
       ['Pela internet', pub(e.publico && e.publico.video)],
+      ['Por http (TV antiga)', pub(e.publico && e.publico.videoHttp)],
       ['Assistindo agora', `${vd.streams ?? '?'} de ${vd.maxStreams ?? '?'}`],
       ['Links guardados', `${vd.linksNoCache ?? '?'}`],
       ['Buscando', (vd.buscando || []).length ? esc(vd.buscando.join(', ')) : 'nada'],

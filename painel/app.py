@@ -195,15 +195,18 @@ async def _publico(sessao):
         async def um(url):
             try:
                 inicio = time.monotonic()
-                async with sessao.get(url + "/saude", timeout=aiohttp.ClientTimeout(total=10),
+                # Sem seguir redirect: o http:// do vídeo tem que responder direto (TV antiga).
+                async with sessao.get(url + "/saude", timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False,
                                       headers={"User-Agent": "painel-bot-supremo"}) as r:
                     await r.read()
                     ms = round((time.monotonic() - inicio) * 1000)
                     return {"ok": r.status == 200, "ms": ms, **({} if r.status == 200 else {"erro": f"HTTP {r.status}"})}
             except Exception as e:
                 return {"ok": False, "erro": str(e) or type(e).__name__}
-        bot, video = await asyncio.gather(um(URL_BOT_PUBLICA), um(URL_VIDEO_PUBLICA))
-        cache_publico["dados"] = {"bot": bot, "video": video}
+        # A TV antiga (Samsung 2012) só toca o vídeo por http:// (MANUAL, seção 12, "TV antiga").
+        url_video_http = URL_VIDEO_PUBLICA.replace("https://", "http://", 1)
+        bot, video, video_http = await asyncio.gather(um(URL_BOT_PUBLICA), um(URL_VIDEO_PUBLICA), um(url_video_http))
+        cache_publico["dados"] = {"bot": bot, "video": video, "videoHttp": video_http}
         cache_publico["quando"] = time.time()
     return cache_publico["dados"]
 
@@ -293,6 +296,9 @@ def _alertas(notebook, bot, containers, video, publico):
     # Por dentro funciona, por fora não: é o túnel (ou a Cloudflare).
     if not (publico.get("video") or {}).get("ok", True) and "semResposta" not in video:
         a.append("O endereço do vídeo (video.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")
+    if (publico.get("video") or {}).get("ok", True) and not (publico.get("videoHttp") or {}).get("ok", True):
+        a.append("O vídeo por http:// (video.iptv01.asia sem o s) não responde direto: a TV antiga para de tocar. "
+                 "Se o erro for HTTP 301, desligue \"Always Use HTTPS\" para video.iptv01.asia na Cloudflare.")
     if not (publico.get("bot") or {}).get("ok", True) and "semResposta" not in bot:
         a.append("O endereço do bot (bot.iptv01.asia) não responde pela internet: clique em Reiniciar o túnel.")
     for c in containers.get("lista", []):

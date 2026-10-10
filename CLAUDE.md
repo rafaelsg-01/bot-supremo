@@ -284,8 +284,9 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
    - `GET /saude`: streams, cache, últimas buscas, domínios, o IP público do WARP e os últimos pedidos
      de vídeo (painel, "Repasses de vídeo");
    - **TV antiga (Samsung 2012):** o player dela não conecta em `https://video.iptv01.asia` (o
-     certificado é só ECDSA; o navegador da TV abre, o player não). Ela toca por `http://video.`
-     (2026-10-09). Não ligue "Always Use HTTPS" para o `video.`. Seção 12 do MANUAL, "TV antiga".
+     certificado é só ECDSA; o navegador da TV abre, o player não). Desde 2026-10-09 o iptv entrega o
+     vídeo da `/tv` por `http://video.` (`urlsVideoRcTv`), e a TV toca. Não ligue "Always Use HTTPS"
+     para o `video.`: o painel avisa se o `http://` parar. Seção 12 do MANUAL, "TV antiga".
    Detalhes, medições e diagnóstico na seção 12 do MANUAL.
 
 ## Infraestrutura

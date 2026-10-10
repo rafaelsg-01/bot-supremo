@@ -78,6 +78,8 @@ TV / celular
 
 Na hora de **tocar**, a TV recebe `https://video.iptv01.asia/proxy-rc?url=<link>&pagina=<página>&sig=<assinatura>`
 e o vídeo **passa pelo notebook** (container `bot-supremo-video`, saindo pelo mesmo WARP do Chrome).
+A `/tv` recebe esse endereço com **`http://`**: o player da TV antiga não conecta no `https://video.`
+(seção 12, "TV antiga").
 Desde 2026-09-28 o site prende o link ao IP de quem o gerou, então só o notebook consegue baixar.
 O site (`static/script.js`) ainda monta `https://iptv01.asia/proxy-rc?url=...`: o Worker só assina e
 responde 302 para o `video.iptv01.asia`. Detalhes na seção 12.
@@ -286,7 +288,7 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | Depois de reboot, bot sem rede | o `warp` foi recriado pelo `~/start.sh` | o `atualizar.sh` recria o nosso container em até 2 min |
 | IP do WARP banido (403 em tudo) | ban | refazer o registro do WARP (ver CLAUDE.md, com backup de `~/content-warp/data/`) |
 | Vídeo volta `erro` com `o link novo não entregou vídeo (404)`, mas a tela mostra o filme tocando | o proxy do site passou a conferir algum header (09/10: `Referer`) | capturar o link com `cabecalhos: true` e testar pelo container de vídeo, header por header, até achar o que falta (`video/origem.py`) |
-| Só a TV antiga (Samsung 2012) não toca: "Servidor 1: Erro", e nenhum pedido dela em "Repasses de vídeo" | o player da TV não conecta em `https://video.` (certificado só ECDSA) | a TV tem que receber o vídeo por `http://video.` ou por https num host com RSA. Seção 12, "TV antiga". Teste: `http://video.iptv01.asia/tv?k=<chave>` |
+| Só a TV antiga (Samsung 2012) não toca: "Servidor 1: Erro", e nenhum pedido dela em "Repasses de vídeo" | o player da TV não conecta em `https://video.` (certificado só ECDSA). Desde 09/10 ela recebe `http://`: se voltou, o `http` quebrou ("Always Use HTTPS" ligado?) ou o iptv voltou a mandar `https` | painel → "Por http (TV antiga)"; conferir o `finalUrl` (seção 12, "TV antiga"). Teste na TV: `http://video.iptv01.asia/tv?k=<chave>` |
 | Vídeo não abre, `/proxy-rc` 404 | link preso a outro IP (o IP do WARP mudou) | nada: o serviço testa antes de entregar e busca outro. Na TV, a URL leva a página e se recupera sozinha |
 | Vídeo não abre, `video.iptv01.asia` 403 "assinatura inválida" | `videoRcToken` do Worker diferente do `VIDEO_TOKEN` do notebook | acertar o secret (`wrangler secret put videoRcToken --env production`) |
 | Vídeo não abre, painel "serviço de vídeo não está respondendo" | container `bot-supremo-video` caído ou sem rede (warp recriado) | o `atualizar.sh` recria em até 2 min; `docker logs bot-supremo-video` |
@@ -568,13 +570,26 @@ echo | openssl s_client -connect iptv01.asia:443 -servername iptv01.asia -tls1_2
 O tamanho do endereço, os símbolos (`%3A`, `%2F`), o `206`, os cabeçalhos e a velocidade **não** são
 o problema: com `http://` o endereço de verdade toca.
 
-**Remédio:** a TV antiga precisa receber o vídeo por um endereço que o player dela alcance:
-`http://video.iptv01.asia/...` (o mais simples, só no `urlsVideoRcTv` do iptv), ou `https://` num
-host com certificado RSA (o Worker em `iptv01.asia` repassando do `video.`; ou um certificado avançado
-RSA para `video.`, pago). **Cuidados para o `http://` funcionar:** na Cloudflare, "Always Use HTTPS"
-tem que continuar **desligado** para `video.iptv01.asia` (hoje `http://` responde direto, sem 301).
-"Automatic HTTPS Rewrites" troca `http://` por `https://` nos links de páginas servidas **por https**;
-a `/tv/play` da TV antiga é aberta por `http://iptv01.asia`, então não é afetada.
+**Remédio aplicado (2026-10-09, decisão do dono):** o iptv entrega o vídeo da `/tv` por
+**`http://video.iptv01.asia/proxy-rc?...`** (`urlsVideoRcTv` em `../projeto-iptv/src/function_rc.ts`,
+commit `cb83780`, versão do Worker `acbcd169`; a anterior era `8da11fde`). A assinatura não inclui o
+esquema, então nada mudou no notebook. O HTML/CSS/JS da TV não foi tocado. Celular e PC (o `/proxy-rc`
+do Worker, 302) continuam em `https`. A `/tv/play` busca os endereços pela versão JSON
+(`/tv/play?format=json&...`), que a Cloudflare não reescreve.
+
+**Cuidados para continuar funcionando:**
+- na Cloudflare, **"Always Use HTTPS" tem que ficar desligado** para `video.iptv01.asia` (hoje o `http://`
+  responde direto, sem 301). O painel confere isso a cada minuto ("Vídeo → Por http (TV antiga)") e
+  avisa no semáforo se o `http://video.iptv01.asia/saude` deixar de responder 200 direto;
+- "Automatic HTTPS Rewrites" troca `http://` por `https://` nos links de páginas servidas **por https**.
+  A `/tv/play` da TV antiga é aberta por `http://iptv01.asia` e recebe os endereços por JSON, então não
+  é afetada;
+- se um dia o `http` sair, as alternativas são `https://` num host com certificado RSA: o Worker em
+  `iptv01.asia` repassando do `video.`, ou um certificado avançado RSA para o `video.` (pago).
+
+**Conferir de fora que a TV está recebendo http** (cookie com uma senha do `/tv-login`):
+`curl -s -b "iptv_auth=<senha>" "http://iptv01.asia/tv/play?format=json&movieId=%2F<pagina-do-filme>.html"`
+→ `finalUrl` começa com `http://video.iptv01.asia/proxy-rc?`.
 
 **Como foi achado (o método, para a próxima vez):**
 1. Medir o que sai do `video.` como a TV pediria (HTTP/1.1, com e sem `Range`, `HEAD`): igual ao Worker
