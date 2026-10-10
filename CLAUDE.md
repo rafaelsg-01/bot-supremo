@@ -281,7 +281,11 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
      dono e o 2 automático. Se a página sair do site, tenta o outro; se os dois falharem, abre a raiz
      do domínio velho e adota o `redecanais.<outro>` para onde ela leva (só se mudou o que vem depois
      do primeiro ponto). O iptv não decide mais o domínio. Regras na seção 5 do MANUAL;
-   - `GET /saude`: streams, cache, últimas buscas, domínios e o IP público do WARP.
+   - `GET /saude`: streams, cache, últimas buscas, domínios, o IP público do WARP e os últimos pedidos
+     de vídeo (painel, "Repasses de vídeo");
+   - **TV antiga (Samsung 2012):** o player dela não conecta em `https://video.iptv01.asia` (o
+     certificado é só ECDSA; o navegador da TV abre, o player não). Ela toca por `http://video.`
+     (2026-10-09). Não ligue "Always Use HTTPS" para o `video.`. Seção 12 do MANUAL, "TV antiga".
    Detalhes, medições e diagnóstico na seção 12 do MANUAL.
 
 ## Infraestrutura

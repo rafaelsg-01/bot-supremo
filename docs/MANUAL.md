@@ -286,6 +286,7 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | Depois de reboot, bot sem rede | o `warp` foi recriado pelo `~/start.sh` | o `atualizar.sh` recria o nosso container em até 2 min |
 | IP do WARP banido (403 em tudo) | ban | refazer o registro do WARP (ver CLAUDE.md, com backup de `~/content-warp/data/`) |
 | Vídeo volta `erro` com `o link novo não entregou vídeo (404)`, mas a tela mostra o filme tocando | o proxy do site passou a conferir algum header (09/10: `Referer`) | capturar o link com `cabecalhos: true` e testar pelo container de vídeo, header por header, até achar o que falta (`video/origem.py`) |
+| Só a TV antiga (Samsung 2012) não toca: "Servidor 1: Erro", e nenhum pedido dela em "Repasses de vídeo" | o player da TV não conecta em `https://video.` (certificado só ECDSA) | a TV tem que receber o vídeo por `http://video.` ou por https num host com RSA. Seção 12, "TV antiga". Teste: `http://video.iptv01.asia/tv?k=<chave>` |
 | Vídeo não abre, `/proxy-rc` 404 | link preso a outro IP (o IP do WARP mudou) | nada: o serviço testa antes de entregar e busca outro. Na TV, a URL leva a página e se recupera sozinha |
 | Vídeo não abre, `video.iptv01.asia` 403 "assinatura inválida" | `videoRcToken` do Worker diferente do `VIDEO_TOKEN` do notebook | acertar o secret (`wrangler secret put videoRcToken --env production`) |
 | Vídeo não abre, painel "serviço de vídeo não está respondendo" | container `bot-supremo-video` caído ou sem rede (warp recriado) | o `atualizar.sh` recria em até 2 min; `docker logs bot-supremo-video` |
@@ -485,7 +486,9 @@ se o Chrome travar ou reiniciar, quem está assistindo continua.
   resposta do bot mais `dominio`. Põe a ação do desafio e o `hostEsperado` se não vierem.
 - `GET|POST /v1/dominios` (Bearer `VIDEO_TOKEN`): lê ou grava `{dominio1, dominio2}` (o painel usa).
 - `GET /saude` (Bearer ou `?token=`): streams, links guardados, buscas em andamento, últimas buscas,
-  domínios, IP público do WARP e desde quando (o log anota quando muda).
+  domínios, IP público do WARP e desde quando (o log anota quando muda), e `repasses` (os últimos 60
+  pedidos de vídeo, inclusive os recusados; painel "Repasses de vídeo").
+- `GET /tv?k=`, `/tv/video`, `/tvv/<nome>`: página de teste da TV antiga (ver "TV antiga" no fim desta seção).
 
 **Reparo automático** (`_buscar_com_reparo` em `video/app.py`, desde 2026-10-01): se o bot responder mas
 o player não pedir nenhum vídeo (`ErroPlayer` em `video/busca.py`), o serviço chama
@@ -525,3 +528,74 @@ ssh servidor-caseiro 'cd ~/bot-supremo; T=$(grep ^VIDEO_TOKEN= .env | cut -d= -f
 
 **Voltar atrás:** o `/proxy-rc` antigo do Worker não funciona mais (o site recusa o IP da Cloudflare).
 Se o serviço de vídeo quebrar, conserte-o; não há caminho alternativo.
+
+### TV antiga (Samsung 2012): o player só toca o `video.` por `http://` (descoberto em 2026-10-09)
+
+**Sintoma:** na TV antiga do dono, a página `/tv/play` abre, lista e navega normalmente, mas o vídeo
+nunca começa: "Erro - Clique em Reiniciar Página…", "Servidor 1: Erro", "Servidor 2…5: Indefinido".
+"Abrir Link Direto" não faz nada (só o título da aba muda). Celular, PC e TVs novas tocam normal. Antes
+do `video.iptv01.asia` (vídeo vindo de `https://iptv01.asia/proxy-rc`, pelo Worker) a mesma TV tocava.
+
+**Causa:** a TV tem **dois "motores" de rede**:
+1. o **navegador** (`Mozilla/5.0 (SMART-TV; X11; Linux armv7l) ... Chromium/25.0.1349.2`), que abre
+   páginas e entende o certificado moderno (ECDSA). Por isso `https://video.iptv01.asia/teste`
+   digitado na barra abre normal, e **engana**;
+2. o **player/baixador da Samsung** (o primeiro pedido dele chega **sem User-Agent**), mais velho, que
+   busca o vídeo do `<video>` e dos links para arquivos. Ele **não consegue conectar no
+   `https://video.iptv01.asia`** e desiste sem mandar nada: nem o pedido recusado chega ao notebook.
+
+A diferença está no certificado. O `iptv01.asia` (domínio do Worker, certificado próprio:
+`iptv01.asia` + `proxy-manager.iptv01.asia`) oferece **RSA** (GTS WR1) para quem não aceita ECDSA. O
+`video.iptv01.asia` usa o certificado universal `*.iptv01.asia`, **só ECDSA** (GTS WE1): um cliente
+só-RSA leva `handshake failure`. TLS 1.0 é aceito nos dois, então a versão do TLS não é o problema.
+Conferir:
+
+```bash
+# o video. não tem RSA (handshake failure); o iptv01.asia tem (WR1)
+echo | openssl s_client -connect video.iptv01.asia:443 -servername video.iptv01.asia -tls1_2 -sigalgs "RSA+SHA256:RSA+SHA1" 2>&1 | grep -E "i:|alert|Cipher is"
+echo | openssl s_client -connect iptv01.asia:443 -servername iptv01.asia -tls1_2 -sigalgs "RSA+SHA256:RSA+SHA1" 2>&1 | grep -E "i:|alert|Cipher is"
+```
+
+**Prova (teste na TV, 2026-10-09 22:42), mesmo vídeo, `<video src=...>` numa página aberta por http:**
+
+| Endereço do vídeo | Tocou? | O que chegou ao notebook |
+|---|---|---|
+| `/proxy-rc` de verdade (584 caracteres), por `http://` | **sim** | `GET` sem UA → `Range: bytes=<moov>` → `bytes=0-` (206, ~30 MB em 2 s) |
+| o mesmo, por `https://` | não | nada |
+| endereço curto (44), por `http://` | **sim** | igual ao 1º |
+| endereço curto, por `https://` | não | nada |
+
+O tamanho do endereço, os símbolos (`%3A`, `%2F`), o `206`, os cabeçalhos e a velocidade **não** são
+o problema: com `http://` o endereço de verdade toca.
+
+**Remédio:** a TV antiga precisa receber o vídeo por um endereço que o player dela alcance:
+`http://video.iptv01.asia/...` (o mais simples, só no `urlsVideoRcTv` do iptv), ou `https://` num
+host com certificado RSA (o Worker em `iptv01.asia` repassando do `video.`; ou um certificado avançado
+RSA para `video.`, pago). **Cuidados para o `http://` funcionar:** na Cloudflare, "Always Use HTTPS"
+tem que continuar **desligado** para `video.iptv01.asia` (hoje `http://` responde direto, sem 301).
+"Automatic HTTPS Rewrites" troca `http://` por `https://` nos links de páginas servidas **por https**;
+a `/tv/play` da TV antiga é aberta por `http://iptv01.asia`, então não é afetada.
+
+**Como foi achado (o método, para a próxima vez):**
+1. Medir o que sai do `video.` como a TV pediria (HTTP/1.1, com e sem `Range`, `HEAD`): igual ao Worker
+   antigo. Comparar certificados: o `video.` não tem RSA.
+2. Testar na TV um endereço de **texto puro** (`/teste`, um 404 do aiohttp). JSON faz a TV "baixar" e
+   não prova nada. Abriu, por http e por https, e a teoria pareceu cair (era o navegador, não o player).
+3. Ler a página da TV: "Servidor 1: Erro" é só `readyState` 0 depois de 3 s. "Indefinido" nos outros =
+   a TV ainda nem desistiu do 1º.
+4. Registrar **cada pedido** do `/proxy-rc` (painel, "Repasses de vídeo"), inclusive os recusados:
+   **nenhum** pedido da TV chegou. O problema estava antes do HTTP.
+5. Página de teste sem JavaScript, servida pelo próprio `video.` (`/tv?k=<chave>`), com o mesmo vídeo
+   por endereços de vários tamanhos e por http/https, solto e dentro de `<video>`: só `http://` chegou e
+   tocou.
+
+**Ferramentas que ficaram** (`video/app.py`):
+- painel → **"Repasses de vídeo"**: cada `GET/HEAD` de vídeo com User-Agent, IP, `Range`, tamanho da URL,
+  status, tempos (origem, 1º bloco, total), bytes e como terminou (`completo`, `cliente fechou`,
+  `falha na origem`, `recusado`). Os mesmos dados estão em `GET /saude` (`repasses`) e no log
+  (`repasse ...`, `repasse recusado ...`);
+- `GET /tv?k=<chave>`: a página de teste (texto e links, sem JavaScript; use o último vídeo aberto). A
+  chave são os 6 primeiros hex de HMAC-SHA256(`VIDEO_TOKEN`, `"tv-teste"`):
+  `ssh servidor-caseiro 'cd ~/bot-supremo; T=$(grep ^VIDEO_TOKEN= .env | cut -d= -f2-); python3 -c "import hmac,hashlib,sys;print(hmac.new(sys.argv[1].encode(),b\"tv-teste\",hashlib.sha256).hexdigest()[:6])" "$T"'`.
+  Abra na TV **por `http://`**. `/tv/video?k=&q=R|A|B|D|F|H&p=http|https` é o `<video>` sozinho
+  (`R` = o endereço de verdade assinado); `/tvv/<nome>?k=` entrega o vídeo.
