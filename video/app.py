@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
 from aiohttp import web
@@ -261,13 +261,34 @@ class Servico:
                 return web.json_response({"ok": False, "erro": str(e)}, status=400)
         return web.json_response({"ok": True, **await self.dominios.ler()})
 
+    def _recusa(self, request, status, motivo):
+        """Registra um pedido de vídeo recusado (assinatura, chave), com o tamanho e o fim do
+        endereço que chegou: uma TV que corta a URL aparece aqui."""
+        caminho = request.path_qs
+        self.repasses.appendleft({
+            "horario": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ip": request.headers.get("CF-Connecting-IP") or request.remote,
+            "metodo": request.method, "range": request.headers.get("Range"),
+            "ua": request.headers.get("User-Agent", ""), "pagina": request.query.get("pagina", ""),
+            "cabecalhos": {k: v for k, v in request.headers.items() if k.lower() not in NAO_GUARDAR},
+            "status": status, "fim": "recusado", "erro": motivo, "bytes": 0, "ms": 0,
+            "tamanhoUrl": len("https://" + request.host + caminho), "fimUrl": caminho[-60:],
+        })
+        log.info("repasse recusado (%d, %s): %d caracteres, termina em %r, ua=%r", status, motivo,
+                 len(caminho), caminho[-60:], request.headers.get("User-Agent", "")[:120])
+        return web.Response(status=status, text=motivo)
+
     async def rota_proxy(self, request):
         url = request.query.get("url", "")
         pagina = request.query.get("pagina", "")
         if not TOKEN or not hmac.compare_digest(request.query.get("sig", ""), assinatura(url, pagina)):
-            return web.Response(status=403, text="assinatura inválida")
+            return self._recusa(request, 403, "assinatura inválida")
         if not url.startswith(("https://", "http://")):
-            return web.Response(status=400, text="url inválida")
+            return self._recusa(request, 400, "url inválida")
+        return await self._repassar(request, url, pagina)
+
+    async def _repassar(self, request, url, pagina):
+        """Repassa o vídeo de `url` (link do site) para quem pediu, com Range."""
         if self.streams >= MAX_STREAMS:
             return web.Response(status=503, text="muitos vídeos ao mesmo tempo", headers={"Retry-After": "10"})
 
@@ -288,6 +309,8 @@ class Servico:
             "pagina": pagina,
             "cabecalhos": {k: v for k, v in request.headers.items() if k.lower() not in NAO_GUARDAR},
             "fim": "andando",
+            "tamanhoUrl": len("https://" + request.host + request.path_qs),
+            "caminho": request.path[:40],
         }
         self.repasses.appendleft(reg)
 
@@ -365,6 +388,83 @@ class Servico:
             if enviados > 1024 * 1024:
                 log.info("stream %s: %.1f MB em %.0f s", pagina or "-", enviados / 1048576, time.monotonic() - inicio)
 
+    # --- página de teste da TV antiga (temporária, diagnóstico) -------------
+    # /tv?k=CHAVE: HTML sem JavaScript com links para o mesmo vídeo (o último aberto) em endereços
+    # de vários tamanhos e formatos. Cada pedido aparece em "Repasses de vídeo" no painel.
+
+    def _chave_tv(self):
+        return hmac.new(TOKEN.encode(), b"tv-teste", hashlib.sha256).hexdigest()[:6]
+
+    def _url_tv(self, nome, tamanho=0, extra=""):
+        u = f"{URL_PUBLICA}/tvv/{nome}?k={self._chave_tv()}{extra}"
+        if tamanho > len(u) + 3:
+            u += "&x=" + "a" * (tamanho - len(u) - 3)
+        return u
+
+    async def _imitacao(self, pagina):
+        """Parâmetros iguais aos do endereço de verdade (url, pagina, sig), para testar os símbolos."""
+        guardado = await self.cache.ler(pagina)
+        link = (guardado or {}).get("links", [""])[0] or "https://exemplo.null-null.shop/proxy?url=https://x/V/a.mp4?ip=2a09:bac5::70"
+        return "&url=" + quote(link, safe="") + "&pagina=" + quote(pagina, safe="") + "&sig=" + "0" * 32
+
+    async def rota_tv(self, request):
+        if not TOKEN or request.query.get("k") != self._chave_tv():
+            return web.Response(status=403, text="chave errada")
+        pagina = await self.cache.mais_recente()
+        if not pagina:
+            return web.Response(text="Abra um episodio na TV antes.")
+        links = [
+            ("A", "curto, termina em .mp4", self._url_tv("a.mp4")),
+            ("B", "curto, sem .mp4", self._url_tv("b")),
+            ("C", "300 letras", self._url_tv("c.mp4", 300)),
+            ("D", "500 letras", self._url_tv("d.mp4", 500)),
+            ("E", "520 letras", self._url_tv("e.mp4", 520)),
+            ("F", "600 letras", self._url_tv("f.mp4", 600)),
+            ("G", "800 letras", self._url_tv("g.mp4", 800)),
+            ("H", "com simbolos como o de verdade", self._url_tv("h", 0, await self._imitacao(pagina))),
+            ("I", "curto, por http (sem s)", self._url_tv("i.mp4").replace("https://", "http://", 1)),
+        ]
+        k = self._chave_tv()
+        html = ("<html><head><title>Teste TV</title></head><body>"
+                f"<h2>Teste da TV</h2><p>Video: {pagina}</p>"
+                "<p>Clique em cada um, espere uns 15 segundos e volte.</p>"
+                + "".join(f'<p><a href="{u}">{letra} - {desc}</a> ({len(u)})</p>' for letra, desc, u in links)
+                + "<h3>Dentro de um player (video)</h3>"
+                + "".join(f'<p><a href="{URL_PUBLICA}/tv/video?k={k}&q={letra}">{letra} no player</a></p>' for letra in "ABDFH")
+                + "</body></html>")
+        return web.Response(text=html, content_type="text/html")
+
+    async def rota_tv_video(self, request):
+        if not TOKEN or request.query.get("k") != self._chave_tv():
+            return web.Response(status=403, text="chave errada")
+        letra = request.query.get("q", "A")
+        if letra == "H":
+            u = self._url_tv("hv", 0, await self._imitacao(await self.cache.mais_recente() or "/"))
+        else:
+            u = self._url_tv(f"{letra.lower()}v" + ("" if letra == "B" else ".mp4"),
+                             {"D": 500, "F": 600}.get(letra, 0))
+        html = (f"<html><head><title>Teste player {letra}</title></head><body>"
+                f"<p>{letra} no player ({len(u)} letras)</p>"
+                f'<video src="{u}" width="640" height="360" controls autoplay></video>'
+                "</body></html>")
+        return web.Response(text=html, content_type="text/html")
+
+    async def rota_tvv(self, request):
+        """O vídeo da página de teste: o último episódio aberto, pelo link guardado."""
+        if not TOKEN or request.query.get("k") != self._chave_tv():
+            return self._recusa(request, 403, "chave errada")
+        pagina = await self.cache.mais_recente()
+        if not pagina:
+            return self._recusa(request, 404, "nenhum vídeo guardado")
+        agora = time.monotonic()
+        guardado = getattr(self, "_tv_link", None)
+        if not guardado or guardado[0] != pagina or agora - guardado[2] > 300:
+            resultado = await asyncio.shield(self.obter(pagina))
+            if not resultado["ok"]:
+                return self._recusa(request, 502, f"sem link: {resultado['erro']}")
+            self._tv_link = guardado = (pagina, resultado["links"][0], agora)
+        return await self._repassar(request, guardado[1], pagina)
+
     async def rota_teste(self, request):
         """Para o botão "Testar o vídeo" do painel: o link do episódio usado por último (testado ou
         buscado de novo) e a URL pública assinada, para o painel baixar um pedaço pela internet."""
@@ -423,6 +523,10 @@ def criar_app():
     app.router.add_route("GET", "/proxy-rc", servico.rota_proxy)
     app.router.add_route("HEAD", "/proxy-rc", servico.rota_proxy)
     app.router.add_get("/saude", servico.rota_saude)
+    app.router.add_get("/tv", servico.rota_tv)
+    app.router.add_get("/tv/video", servico.rota_tv_video)
+    app.router.add_route("GET", "/tvv/{nome}", servico.rota_tvv)
+    app.router.add_route("HEAD", "/tvv/{nome}", servico.rota_tvv)
     app.router.add_post("/v1/teste", servico.rota_teste)
     app.router.add_post("/v1/pagina", servico.rota_pagina)
     app.router.add_get("/v1/dominios", servico.rota_dominios)

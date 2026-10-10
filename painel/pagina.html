@@ -284,7 +284,7 @@ async function atualizarEstado() {
     const det = JSON.stringify({ pedido: x.cabecalhos, resposta: x.resposta, erro: x.erro }, null, 1);
     return `<tr><td class="num">${esc(x.horario.slice(11))}</td>
       <td class="url"><details data-chave="${esc(chave)}"${abertos.has(chave) ? ' open' : ''}><summary>${esc(x.ua || '(sem User-Agent)')}</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(det)}</pre></details><div class="suave">${esc(x.ip || '')}</div></td>
-      <td>${esc(x.metodo)}<div class="suave">${esc(x.range || 'sem Range')}</div></td>
+      <td>${esc(x.metodo)} ${esc(x.caminho && x.caminho !== '/proxy-rc' ? x.caminho : '')}<div class="suave">${esc(x.range || 'sem Range')}${x.tamanhoUrl ? ` · URL de ${x.tamanhoUrl}` : ''}${x.fimUrl ? ` · termina em …${esc(x.fimUrl.slice(-25))}` : ''}</div></td>
       <td><span class="${x.status && x.status < 300 ? 'ok' : 'ruim'}">${x.status ?? '…'}</span> · <span class="${fimBom ? '' : 'ruim'}">${esc(x.fim)}</span><div class="suave">${mb}${x.linkNovo ? ' · link refeito' : ''}${x.erro ? ' · ' + esc(x.erro) : ''}</div></td>
       <td class="num">origem ${s(x.msOrigem)}<div class="suave">1º bloco ${s(x.ms1oBloco)} · total ${s(x.ms)}</div></td></tr>`;
   }).join('') : '<tr><td colspan="5" class="suave">Nenhum vídeo pedido desde que o serviço de vídeo ligou.</td></tr>';
