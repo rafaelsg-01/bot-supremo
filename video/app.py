@@ -425,12 +425,17 @@ class Servico:
             ("I", "curto, por http (sem s)", self._url_tv("i.mp4").replace("https://", "http://", 1)),
         ]
         k = self._chave_tv()
+        # Links relativos: a página do player abre pelo mesmo http/https desta página.
+        player = [("1", "R", "http", "endereco de verdade, por http"),
+                  ("2", "R", "https", "endereco de verdade, por https (como hoje)"),
+                  ("3", "A", "http", "curto, por http"),
+                  ("4", "A", "https", "curto, por https")]
         html = ("<html><head><title>Teste TV</title></head><body>"
                 f"<h2>Teste da TV</h2><p>Video: {pagina}</p>"
-                "<p>Clique em cada um, espere uns 15 segundos e volte.</p>"
+                "<h3>Teste do player (abra cada um, espere 20 segundos, volte)</h3>"
+                + "".join(f'<p><a href="/tv/video?k={k}&q={q}&p={p}">{n} - {desc}</a></p>' for n, q, p, desc in player)
+                + "<h3>Links soltos (fazem a TV tentar baixar)</h3>"
                 + "".join(f'<p><a href="{u}">{letra} - {desc}</a> ({len(u)})</p>' for letra, desc, u in links)
-                + "<h3>Dentro de um player (video)</h3>"
-                + "".join(f'<p><a href="{URL_PUBLICA}/tv/video?k={k}&q={letra}">{letra} no player</a></p>' for letra in "ABDFH")
                 + "</body></html>")
         return web.Response(text=html, content_type="text/html")
 
@@ -438,13 +443,24 @@ class Servico:
         if not TOKEN or request.query.get("k") != self._chave_tv():
             return web.Response(status=403, text="chave errada")
         letra = request.query.get("q", "A")
-        if letra == "H":
-            u = self._url_tv("hv", 0, await self._imitacao(await self.cache.mais_recente() or "/"))
+        esquema = "http" if request.query.get("p") == "http" else "https"
+        pagina = await self.cache.mais_recente() or "/"
+        if letra == "R":
+            # O endereço de verdade (o mesmo que a página do play recebe), assinado.
+            guardado = await self.cache.ler(pagina)
+            link = ((guardado or {}).get("links") or [""])[0]
+            u = f"{URL_PUBLICA}/proxy-rc?" + urlencode({"url": link, "pagina": pagina, "sig": assinatura(link, pagina)})
+        elif letra == "H":
+            u = self._url_tv("hv", 0, await self._imitacao(pagina))
         else:
             u = self._url_tv(f"{letra.lower()}v" + ("" if letra == "B" else ".mp4"),
                              {"D": 500, "F": 600}.get(letra, 0))
-        html = (f"<html><head><title>Teste player {letra}</title></head><body>"
-                f"<p>{letra} no player ({len(u)} letras)</p>"
+        u = u.replace("https://", esquema + "://", 1)
+        log.info("teste tv: página do player %s por %s aberta (página por %s), ua=%r", letra, esquema,
+                 request.headers.get("X-Forwarded-Proto") or request.scheme,
+                 request.headers.get("User-Agent", "")[:80])
+        html = (f"<html><head><title>Teste player {letra} {esquema}</title></head><body>"
+                f"<p>{letra} no player, por {esquema} ({len(u)} letras)</p>"
                 f'<video src="{u}" width="640" height="360" controls autoplay></video>'
                 "</body></html>")
         return web.Response(text=html, content_type="text/html")
