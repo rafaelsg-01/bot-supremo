@@ -55,6 +55,9 @@ BLOCO = 256 * 1024
 
 # Headers da origem que seguem para quem pediu o vídeo.
 REPASSAR = ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified")
+# Diagnóstico dos repasses (painel, "Repasses de vídeo"): headers de quem pediu que não guardamos.
+NAO_GUARDAR = {"cookie", "authorization", "cf-ray", "cf-visitor", "cdn-loop", "cf-warp-tag-id",
+               "cf-ipcountry", "x-forwarded-for", "x-forwarded-proto", "cf-connecting-ip"}
 
 
 def assinatura(url, pagina):
@@ -70,6 +73,7 @@ class Servico:
         self.origem = Origem(site=self.dominios.principal)
         self.em_andamento = {}  # pagina -> tarefa (um pedido por página ao mesmo tempo)
         self.historico = collections.deque(maxlen=20)
+        self.repasses = collections.deque(maxlen=60)  # cada GET/HEAD do /proxy-rc (diagnóstico)
         self.streams = 0
         self.bytes_total = 0
         self.ip = None
@@ -273,8 +277,34 @@ class Servico:
         enviados = 0
         origem_resp = None
         resposta = None
+        # Registro do repasse, para entender clientes que não tocam (TV antiga). Fica visível no
+        # painel enquanto o vídeo passa; os campos são preenchidos aos poucos.
+        reg = {
+            "horario": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ip": request.headers.get("CF-Connecting-IP") or request.remote,
+            "metodo": request.method,
+            "range": request.headers.get("Range"),
+            "ua": request.headers.get("User-Agent", ""),
+            "pagina": pagina,
+            "cabecalhos": {k: v for k, v in request.headers.items() if k.lower() not in NAO_GUARDAR},
+            "fim": "andando",
+        }
+        self.repasses.appendleft(reg)
+
+        def fechar_registro(fim, erro=None):
+            reg["fim"] = fim
+            reg["bytes"] = enviados
+            reg["ms"] = round((time.monotonic() - inicio) * 1000)
+            if erro:
+                reg["erro"] = erro
+            log.info("repasse %s %s range=%s -> %s %s, %d bytes em %d ms, origem %s ms, ua=%r%s",
+                     reg["ip"], reg["metodo"], reg["range"], reg.get("status"), fim, enviados,
+                     reg["ms"], reg.get("msOrigem"), reg["ua"][:120], f" ({erro})" if erro else "")
+
         try:
             origem_resp = await self.origem.abrir(url, extra)
+            reg["statusOrigem"] = origem_resp.status
+            reg["msOrigem"] = round((time.monotonic() - inicio) * 1000)
             if origem_resp.status in (403, 404, 410) and pagina:
                 # Link morreu (IP do WARP mudou, assinatura velha): pega outro e tenta uma vez.
                 log.info("stream %s: origem %d; buscando link novo", pagina, origem_resp.status)
@@ -282,8 +312,13 @@ class Servico:
                 origem_resp = None
                 resultado = await asyncio.shield(self.obter(pagina))
                 if not resultado["ok"]:
+                    reg["status"] = 502
+                    fechar_registro("erro", f"sem link novo: {resultado['erro']}")
                     return web.Response(status=502, text=f"sem link novo: {resultado['erro']}")
                 origem_resp = await self.origem.abrir(resultado["links"][0], extra)
+                reg["linkNovo"] = True
+                reg["statusOrigem"] = origem_resp.status
+                reg["msOrigem"] = round((time.monotonic() - inicio) * 1000)
 
             resposta = web.StreamResponse(status=origem_resp.status)
             for k in REPASSAR:
@@ -297,18 +332,28 @@ class Servico:
             resposta.headers["Access-Control-Allow-Origin"] = "*"
             resposta.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range"
             resposta.headers["Cache-Control"] = "no-store"
+            reg["status"] = origem_resp.status
+            reg["resposta"] = {k: v for k, v in resposta.headers.items()}
             await resposta.prepare(request)
             if request.method != "HEAD":
                 async for bloco in origem_resp.content.iter_chunked(BLOCO):
                     await resposta.write(bloco)
+                    if not enviados:
+                        reg["ms1oBloco"] = round((time.monotonic() - inicio) * 1000)
                     enviados += len(bloco)
                 await resposta.write_eof()
+            fechar_registro("completo")
             return resposta
         except (ConnectionResetError, aiohttp.ClientConnectionResetError):
             # Quem assistia fechou ou pulou para outro ponto do vídeo: normal.
+            fechar_registro("cliente fechou")
             return resposta or web.Response(status=499)
+        except asyncio.CancelledError:
+            fechar_registro("cancelado (cliente sumiu)")
+            raise
         except (aiohttp.ClientError, OSError, TimeoutError, ErroOrigem) as e:
             log.warning("stream %s: falha na origem: %s", pagina or url[:80], e)
+            fechar_registro("falha na origem", f"{type(e).__name__}: {e}")
             if resposta is not None and resposta.prepared:
                 return resposta  # os cabeçalhos já saíram: só resta encerrar
             return web.Response(status=502, text=f"falha ao buscar o vídeo: {e}")
@@ -349,6 +394,7 @@ class Servico:
             "ultimoReparo": self.ultimo_reparo_horario,
             "dominios": await self.dominios.ler(),
             "ultimos": list(self.historico),
+            "repasses": list(self.repasses),
         })
 
     # --- IP público do WARP -------------------------------------------------

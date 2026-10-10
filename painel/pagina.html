@@ -154,6 +154,17 @@
   </section>
 
   <section class="cartao secao">
+    <h2>Repasses de vídeo</h2>
+    <div class="suave" style="margin-bottom:8px">Cada vez que uma TV, celular ou PC pede um pedaço do vídeo ao notebook. Para achar por que um aparelho não toca: compare a linha dele com a de um que toca. Toque na linha para ver os headers.</div>
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>Hora</th><th>Quem</th><th>Pediu</th><th>Resultado</th><th style="text-align:right">Tempos</th></tr></thead>
+        <tbody id="repasses"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="cartao secao">
     <h2>Containers no notebook</h2>
     <div class="rolagem">
       <table>
@@ -262,6 +273,21 @@ async function atualizarEstado() {
       ['IP do WARP', vd.ipPublico ? `${esc(vd.ipPublico)}<div class="suave">desde ${esc(vd.ipDesde || '?')}</div>` : '—'],
     ]);
   }
+
+  const rp = (vd && vd.repasses) || [];
+  const abertos = new Set([...document.querySelectorAll('#repasses details[open]')].map((d) => d.dataset.chave));
+  $('repasses').innerHTML = rp.length ? rp.map((x) => {
+    const chave = x.horario + x.ip + (x.range || '');
+    const mb = x.bytes == null ? '' : (x.bytes / 1048576).toFixed(1) + ' MB';
+    const fimBom = x.fim === 'completo' || x.fim === 'andando' || (x.fim === 'cliente fechou' && x.bytes > 0);
+    const s = (ms) => ms == null ? '—' : (ms / 1000).toFixed(1) + ' s';
+    const det = JSON.stringify({ pedido: x.cabecalhos, resposta: x.resposta, erro: x.erro }, null, 1);
+    return `<tr><td class="num">${esc(x.horario.slice(11))}</td>
+      <td class="url"><details data-chave="${esc(chave)}"${abertos.has(chave) ? ' open' : ''}><summary>${esc(x.ua || '(sem User-Agent)')}</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(det)}</pre></details><div class="suave">${esc(x.ip || '')}</div></td>
+      <td>${esc(x.metodo)}<div class="suave">${esc(x.range || 'sem Range')}</div></td>
+      <td><span class="${x.status && x.status < 300 ? 'ok' : 'ruim'}">${x.status ?? '…'}</span> · <span class="${fimBom ? '' : 'ruim'}">${esc(x.fim)}</span><div class="suave">${mb}${x.linkNovo ? ' · link refeito' : ''}${x.erro ? ' · ' + esc(x.erro) : ''}</div></td>
+      <td class="num">origem ${s(x.msOrigem)}<div class="suave">1º bloco ${s(x.ms1oBloco)} · total ${s(x.ms)}</div></td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="suave">Nenhum vídeo pedido desde que o serviço de vídeo ligou.</td></tr>';
 
   const dom = (vd && vd.dominios) || null;
   if (dom) {
