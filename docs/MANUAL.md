@@ -284,6 +284,7 @@ Teste "no seco" sem o serviço (só xdotool e capturas de tela):
 | 524 no iptv | resposta sem começar em ~120 s | não deveria mais acontecer (item 4 da seção 3). Se voltar, conferir se a resposta continua em streaming |
 | 429 "fila cheia" | mais de 30 pedidos acumulados | algo está chamando em loop. Achar quem no `wrangler tail` |
 | Série aparece sem episódios | página em formato diferente, ou o bot falhou | pedir a página ao bot e testar `parseSeasonsAndEpisodes` com o HTML |
+| A `/tv` mostra "O site de origem está fora do ar" | série sem episódios, episódio sem link ou filme que falhou (desde 2026-10-11, `src/tv/site-fora.ts` do iptv; antes era página vazia ou a página de erro do navegador) | se o site caiu de verdade (grupo do Telegram), esperar. Se não, seguir as linhas acima |
 | Lista com acentos quebrados (`NÃºmeros`) | `textoDoPre` não desfez a codificação | conferir o `<pre>` cru que o bot devolve |
 | Depois de reboot, bot sem rede | o `warp` foi recriado pelo `~/start.sh` | o `atualizar.sh` recria o nosso container em até 2 min |
 | IP do WARP banido (403 em tudo) | ban | refazer o registro do WARP (ver CLAUDE.md, com backup de `~/content-warp/data/`) |
