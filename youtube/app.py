@@ -13,6 +13,7 @@ Por que assim (testes de 2026-10-14, MANUAL seção 12, "YouTube"):
 
 Rotas (todas com Bearer VIDEO_TOKEN, menos /arquivo, que usa a chave k=):
 - POST /preparar {url}: começa (ou reaproveita) e devolve o estado;
+- POST /playlist {url}: a lista de uma playlist ou mix (ids, títulos, durações), sem baixar nada;
 - GET /estado/<id>: na_fila | extraindo | baixando (progresso 0-100) | juntando | pronto | erro;
 - GET/HEAD /arquivo/<id>.mp4?k=: o vídeo pronto, com Range;
 - GET /saude.
@@ -60,6 +61,8 @@ BLOQUEIO = re.compile(r"not a bot|Sign in|429|Too Many Requests|cookies are no l
 CAMADAS = ("cookies", "web_embedded")
 
 ID_VIDEO = re.compile(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})")
+ID_LISTA = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
+MAX_PLAYLIST = 300
 
 
 def id_do_video(url):
@@ -203,27 +206,29 @@ class Servico:
     async def _extrair(self, vid):
         """Tenta as camadas na ordem. Se todas forem barradas, atualiza o yt-dlp (no máximo a cada
         6 h) e tenta mais uma vez."""
+        alvo = f"https://www.youtube.com/watch?v={vid}"
+        extras = ["--no-playlist", "--remote-components", "ejs:github", "-f", FORMATO]
         try:
-            return await self._camadas(vid)
+            return await self._camadas(vid, alvo, extras)
         except ErroYoutube as e:
             if time.time() - self.ultima_atualizacao < INTERVALO_ATUALIZAR_S:
                 raise
             log.info("yt-dlp falhou (%s); atualizando e tentando de novo", e)
             await self._atualizar_ytdlp()
-            return await self._camadas(vid)
+            return await self._camadas(vid, alvo, extras)
 
-    async def _camadas(self, vid):
+    async def _camadas(self, rotulo, alvo, extras):
         ultimo = None
         for camada in CAMADAS:
             if camada == "cookies" and not os.path.exists(os.path.join(DADOS, "cookies.txt")):
                 self.cookies = "sem arquivo"
                 continue
             try:
-                info = await self._ytdlp(vid, camada)
+                info = await self._ytdlp(rotulo, alvo, extras, camada)
             except ErroYoutube as e:
                 if camada == "cookies" and BLOQUEIO.search(str(e)):
                     self.cookies = "recusados em " + time.strftime("%Y-%m-%d %H:%M")
-                    log.warning("youtube %s: cookies recusados (%s); tentando sem conta", vid, str(e).split(". Use --")[0])
+                    log.warning("youtube %s: cookies recusados (%s); tentando sem conta", rotulo, str(e).split(". Use --")[0])
                 if not BLOQUEIO.search(str(e)):
                     raise
                 ultimo = e
@@ -231,23 +236,23 @@ class Servico:
             if camada == "cookies":
                 self.cookies = "ok"
             self.ultima_camada = camada
-            log.info("youtube %s: extraído pela camada %s", vid, camada)
+            log.info("youtube %s: extraído pela camada %s", rotulo, camada)
             return info
         raise ultimo or ErroYoutube("nenhuma camada disponível")
 
-    async def _ytdlp(self, vid, camada):
+    async def _ytdlp(self, rotulo, alvo, extras, camada):
         programa = YTDLP if os.path.exists(YTDLP) else YTDLP_IMAGEM
-        comando = [programa, "-J", "--no-playlist", "--remote-components", "ejs:github", "-f", FORMATO]
+        comando = [programa, "-J", *extras]
         copia = None
         if camada == "cookies":
             # O yt-dlp regrava o arquivo de cookies: usa uma cópia, para o original nunca estragar
-            copia = os.path.join(DADOS, "tmp", f"cookies-{vid}.txt")
+            copia = os.path.join(DADOS, "tmp", f"cookies-{rotulo}-{time.monotonic_ns()}.txt")
             os.makedirs(os.path.dirname(copia), exist_ok=True)
             shutil.copyfile(os.path.join(DADOS, "cookies.txt"), copia)
             comando += ["--cookies", copia]
         else:
             comando += ["--extractor-args", f"youtube:player_client={camada}"]
-        comando.append(f"https://www.youtube.com/watch?v={vid}")
+        comando.append(alvo)
         proc = await asyncio.create_subprocess_exec(*comando, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             saida, erro = await asyncio.wait_for(proc.communicate(), 120)
@@ -264,6 +269,29 @@ class Servico:
             linhas = [l for l in erro.decode(errors="replace").splitlines() if l.startswith("ERROR")]
             raise ErroYoutube((linhas[-1] if linhas else erro.decode(errors="replace").strip()[-200:]).removeprefix("ERROR: "))
         return json.loads(saida)
+
+    async def playlist(self, url):
+        """Lista de uma playlist (ou mix) sem extrair os vídeos: um pedido só ao YouTube. Não pega a
+        trava: é rápido e não baixa nada. `inicio` é a posição do v= do link (0 se não houver)."""
+        lista = ID_LISTA.search(url or "")
+        if not lista:
+            raise ErroYoutube("não achei o list= no link")
+        vid = id_do_video(url)
+        # Mix (RD...) só abre pela página de um vídeo; playlist normal, pela página da playlist
+        alvo = (f"https://www.youtube.com/watch?v={vid}&list={lista.group(1)}" if vid
+                else f"https://www.youtube.com/playlist?list={lista.group(1)}")
+        extras = ["--flat-playlist", "--yes-playlist", "--playlist-items", f"1:{MAX_PLAYLIST}"]
+        inicio_s = time.time()
+        info = await self._camadas("lista-" + lista.group(1)[:20], alvo, extras)
+        itens = []
+        for e in info.get("entries") or []:
+            titulo = e.get("title") or ""
+            if not e.get("id") or titulo in ("[Private video]", "[Deleted video]"):
+                continue
+            itens.append({"id": e["id"], "titulo": titulo, "duracao": e.get("duration") or 0})
+        inicio = next((i for i, item in enumerate(itens) if item["id"] == vid), 0)
+        log.info("playlist %s: %d vídeos em %.1f s", lista.group(1), len(itens), time.time() - inicio_s)
+        return {"titulo": info.get("title") or "", "itens": itens, "inicio": inicio}
 
     async def _atualizar_ytdlp(self):
         self.ultima_atualizacao = time.time()
@@ -340,6 +368,18 @@ class Servico:
         except ErroYoutube as e:
             return web.json_response({"ok": False, "erro": str(e)}, status=400)
 
+    async def rota_playlist(self, request):
+        if not self._autorizado(request):
+            return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
+        try:
+            corpo = await request.json()
+            return web.json_response({"ok": True, **await self.playlist(str(corpo.get("url") or ""))})
+        except (ValueError, json.JSONDecodeError, AttributeError):
+            return web.json_response({"ok": False, "erro": "corpo não é JSON"}, status=400)
+        except ErroYoutube as e:
+            log.warning("playlist falhou: %s", e)
+            return web.json_response({"ok": False, "erro": self._erro_curto(e)}, status=400)
+
     async def rota_estado(self, request):
         if not self._autorizado(request):
             return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
@@ -387,6 +427,7 @@ def criar_app():
     servico = Servico()
     app = web.Application(client_max_size=64 * 1024)
     app.router.add_post("/preparar", servico.rota_preparar)
+    app.router.add_post("/playlist", servico.rota_playlist)
     app.router.add_get("/estado/{id}", servico.rota_estado)
     app.router.add_route("GET", "/arquivo/{nome}", servico.rota_arquivo)
     app.router.add_get("/saude", servico.rota_saude)

@@ -10,7 +10,7 @@ ser baixado daqui, e este serviço faz duas coisas:
   busca um link novo e continua.
 - POST /v1/pagina: abre uma página do site pelo bot (listas, séries) no domínio da vez.
 - GET/POST /v1/dominios: os dois domínios do site (painel). Ver dominio.py.
-- POST /v1/youtube, GET /v1/youtube/<id>: repassados ao serviço do YouTube (youtube/app.py, rede de
+- POST /v1/youtube, POST /v1/youtube/playlist, GET /v1/youtube/<id>: repassados ao serviço do YouTube (youtube/app.py, rede de
   casa), que só é alcançável daqui. Quem usa é o url.iptv01.asia (../projeto-url).
 - GET /tv?k=, /tv/video, /tvv/<nome>: página de teste da TV antiga (sem JavaScript). A TV Samsung 2012
   só toca o vídeo por http:// (o player dela não conecta no https daqui). MANUAL, seção 12, "TV antiga".
@@ -502,14 +502,18 @@ class Servico:
         return web.json_response({**resultado, "pagina": pagina})
 
     async def rota_youtube(self, request):
-        """Repassa POST /v1/youtube -> /preparar e GET /v1/youtube/<id> -> /estado/<id>."""
+        """Repassa POST /v1/youtube -> /preparar, POST /v1/youtube/playlist -> /playlist e
+        GET /v1/youtube/<id> -> /estado/<id>."""
         if not self._autorizado(request):
             return web.json_response({"ok": False, "erro": "token inválido"}, status=401)
         headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+        lista = request.path.endswith("/playlist")
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as sessao:
+            # A lista chama o yt-dlp na hora (até duas camadas): mais tempo
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90 if lista else 15)) as sessao:
                 if request.method == "POST":
-                    pedido = sessao.post(f"{URL_YOUTUBE}/preparar", data=await request.read(), headers=headers)
+                    destino = "/playlist" if lista else "/preparar"
+                    pedido = sessao.post(f"{URL_YOUTUBE}{destino}", data=await request.read(), headers=headers)
                 else:
                     pedido = sessao.get(f"{URL_YOUTUBE}/estado/{quote(request.match_info['id'])}", headers=headers)
                 async with pedido as r:
@@ -571,6 +575,7 @@ def criar_app():
     app.router.add_get("/v1/dominios", servico.rota_dominios)
     app.router.add_post("/v1/dominios", servico.rota_dominios)
     app.router.add_post("/v1/youtube", servico.rota_youtube)
+    app.router.add_post("/v1/youtube/playlist", servico.rota_youtube)
     app.router.add_get("/v1/youtube/{id}", servico.rota_youtube)
 
     async def ao_iniciar(_app):
