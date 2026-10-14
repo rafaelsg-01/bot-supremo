@@ -289,6 +289,14 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
      para o `video.`: o painel avisa se o `http://` parar. Seção 12 do MANUAL, "TV antiga".
    Detalhes, medições e diagnóstico na seção 12 do MANUAL.
 
+6. **Serviço do YouTube** (`youtube/`, container `bot-supremo-youtube`, mesma imagem, desde 2026-10-14).
+   Atende o `url.iptv01.asia` (Worker `../projeto-url`: player vazio na TV, controlado pelo celular).
+   Recebe um link do YouTube, baixa vídeo 720p (H.264) e áudio (AAC) com o yt-dlp, junta com o ffmpeg
+   (só cópia) e serve o arquivo; o `/proxy-rc` do serviço de vídeo entrega para a TV. **Usa a internet
+   de casa** (`network_mode: host`): pelo WARP o YouTube pede "não é um robô". Escuta só em
+   `172.18.0.1:8075` (gateway da `flare-net`); o Worker chega por `POST /v1/youtube` do serviço de vídeo.
+   Seção 12 do MANUAL, "url.iptv01.asia".
+
 ## Infraestrutura
 
 ### O notebook (`ssh servidor-caseiro`, acesso livre)
@@ -297,7 +305,8 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
 - Debian 13 (trixie), só terminal, sem interface gráfica instalada.
 - Fica ligado 24h em cima do armário, com internet por cabo.
 - **O notebook é só do iptv** (decisão do dono, 2026-09-28). Rodam só: `warp` (Cloudflare WARP, a
-  saída para a internet), `bot-supremo`, `bot-supremo-video`, `bot-supremo-painel` e `bot-supremo-tunel`.
+  saída para a internet), `bot-supremo`, `bot-supremo-video`, `bot-supremo-youtube`, `bot-supremo-painel`
+  e `bot-supremo-tunel`.
   O FlareSolverr antigo, o túnel antigo (`servidor-caseiro-01`, `02proxy-web`) e o WARP instalado no
   sistema foram removidos; backup em `~/antigo-2026-09-28.tgz`.
 - **Fora do Docker, fica:** SSH, **Tailscale** (o dono acessa o terminal pelo celular) e **Samba** (pasta

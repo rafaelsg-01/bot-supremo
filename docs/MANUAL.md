@@ -623,3 +623,25 @@ pelo `/proxy-rc` deste serviço, assinado com o mesmo `VIDEO_TOKEN` (secret do W
 então sem recuperação automática se o link morrer). **Se trocar o `VIDEO_TOKEN` do notebook, troque
 também lá** (`npx wrangler secret put VIDEO_TOKEN` em `../projeto-url`). Os pedidos aparecem em
 "Repasses de vídeo" como os outros.
+
+**Link do YouTube** (container `bot-supremo-youtube`, código em `youtube/app.py`):
+- Caminho: celular → Worker (sala) → `POST https://video.iptv01.asia/v1/youtube` → serviço de vídeo
+  repassa a `http://172.18.0.1:8075` (o serviço do YouTube; gateway da `flare-net`, só os containers
+  chegam) → yt-dlp extrai → baixa vídeo (H.264 até 720p) e áudio (AAC) em pedaços de 10 MB, 4 por vez
+  → ffmpeg junta só copiando → `dados/youtube/<id>-720.mp4`. A sala pergunta o estado a cada 2 s
+  (`GET /v1/youtube/<id>`), mostra o progresso no celular e na TV e, pronto, manda o `/proxy-rc` do
+  arquivo para a TV.
+- **Usa a internet de casa** (`network_mode: host`), não o WARP: pelo WARP o YouTube pede "confirme
+  que não é um robô", e o link do vídeo fica preso ao IP de quem extraiu.
+- Por que baixar antes: a TV só toca MP4 normal (o fragmentado, que daria para tocar enquanto baixa,
+  ela não abre). Tempos: clipe ~15 s, vídeo de 1 h 30 ~45 s. O mesmo vídeo de novo: na hora.
+- Guarda até 20 GB / 7 dias sem uso (`YOUTUBE_LIMITE_GB`, `YOUTUBE_DIAS`), um vídeo baixando por vez.
+- Atualização: a imagem traz o yt-dlp, o Deno e o ffmpeg mais novos toda segunda. Entre uma imagem e
+  outra, se o yt-dlp falhar, o serviço roda `yt-dlp -U` (no máximo a cada 6 h; a cópia gravável fica
+  em `dados/youtube/bin`) e tenta de novo.
+- Diagnóstico: `docker logs bot-supremo-youtube` (`youtube <id> pronto em N s` / `falhou: <erro do
+  yt-dlp>`); estado com token: `docker exec bot-supremo-video python3 -c` chamando
+  `http://172.18.0.1:8075/saude` com `Authorization: Bearer $VIDEO_TOKEN`.
+- **Se aparecer "Sign in to confirm you're not a bot"** pela internet de casa: 1º, o complemento de
+  PO token sem conta (`bgutil-ytdlp-pot-provider`); último recurso, cookies de uma conta Google
+  **secundária** em `dados/youtube/cookies.txt` (formato Netscape; o serviço usa sozinho se existir).
