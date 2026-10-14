@@ -642,6 +642,19 @@ também lá** (`npx wrangler secret put VIDEO_TOKEN` em `../projeto-url`). Os pe
 - Diagnóstico: `docker logs bot-supremo-youtube` (`youtube <id> pronto em N s` / `falhou: <erro do
   yt-dlp>`); estado com token: `docker exec bot-supremo-video python3 -c` chamando
   `http://172.18.0.1:8075/saude` com `Authorization: Bearer $VIDEO_TOKEN`.
-- **Se aparecer "Sign in to confirm you're not a bot"** pela internet de casa: 1º, o complemento de
-  PO token sem conta (`bgutil-ytdlp-pot-provider`); último recurso, cookies de uma conta Google
-  **secundária** em `dados/youtube/cookies.txt` (formato Netscape; o serviço usa sozinho se existir).
+- **Camadas contra o "Sign in to confirm you're not a bot"** (a casa foi barrada em 14/10, com 429,
+  depois de muitos testes seguidos): cada vídeo tenta, na ordem, (1) com os cookies de uma conta
+  Google **secundária** (`dados/youtube/cookies.txt`, dono 1000, `chmod 600`, nunca no git; o yt-dlp
+  recebe uma cópia, porque regrava o arquivo) e (2) sem conta, cliente `web_embedded`. Erro que não é
+  de bloqueio (vídeo removido, privado) para na hora. O log diz a camada (`extraído pela camada ...`)
+  e o `/saude` mostra `cookies` (`ok`, `recusados em <hora>`, `sem arquivo`) e `ultimaCamada`.
+  Extração com cookies: 9–15 s (a 1ª depois de reiniciar ~30 s, montando o cache em `dados/youtube/cache`).
+- **Renovar os cookies** (quando o celular disser "os cookies venceram"): no Chrome do PC, extensão
+  "Get cookies.txt LOCALLY" liberada na janela anônima → **janela anônima** → entrar no YouTube com a
+  conta secundária → na **mesma aba**, abrir `https://www.youtube.com/robots.txt` → exportar → **fechar
+  a janela anônima** sem sair da conta (senão o YouTube troca os cookies). Copiar com
+  `scp <arquivo> servidor-caseiro:bot-supremo/dados/youtube/cookies.txt`, depois
+  `sudo chown 1000:1000` e `chmod 600` lá, e apagar a cópia do PC. Não precisa reiniciar nada.
+- Se as duas camadas caírem juntas: PO token sem navegador (`bgutil-ytdlp-pot-provider`). Já
+  descartados (14/10): capturar a rede pelo Chrome como no RC (o player web do YouTube usa SABR, sem
+  arquivo), a API oficial do Google (só dados) e um 2º Chrome (RAM).

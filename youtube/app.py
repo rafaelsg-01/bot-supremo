@@ -52,6 +52,13 @@ FORMATO = (f"bv*[vcodec^=avc1][height<={ALTURA}][ext=mp4][protocol=https]+ba[ext
            "/b[ext=mp4][vcodec^=avc1][acodec!=none][protocol=https]")
 INTERVALO_ATUALIZAR_S = 6 * 3600
 
+# Erro de bloqueio (vale tentar a próxima camada); outros erros (vídeo privado, removido) param na hora.
+BLOQUEIO = re.compile(r"not a bot|Sign in|429|Too Many Requests|cookies are no longer valid|rotated", re.I)
+# Camadas, na ordem: 1) com os cookies de uma conta secundária (dados/youtube/cookies.txt), como
+# alguém logado; 2) sem conta, cliente web_embedded (o player embutido), que passou quando a casa foi
+# barrada em 14/10. MANUAL seção 12, "Se aparecer 'não é um robô'".
+CAMADAS = ("cookies", "web_embedded")
+
 ID_VIDEO = re.compile(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})")
 
 
@@ -74,6 +81,8 @@ class Servico:
         self.trava = asyncio.Lock()  # um vídeo por vez (HD mecânico, Celeron)
         self.ultima_atualizacao = 0.0
         self.sessao = None
+        self.cookies = "sem arquivo"  # ok | recusados em <hora> | sem arquivo
+        self.ultima_camada = None
 
     # --- arquivos -------------------------------------------------------------
 
@@ -135,7 +144,7 @@ class Servico:
                 self._pronto(vid, t)
                 log.info("youtube %s pronto em %.1f s: %s", vid, time.time() - t["inicio"], t["titulo"])
             except Exception as e:
-                t.update(estado="erro", erro=str(e)[:300])
+                t.update(estado="erro", erro=self._erro_curto(e))
                 log.warning("youtube %s falhou: %s", vid, e)
             finally:
                 shutil.rmtree(os.path.join(DADOS, "tmp", vid), ignore_errors=True)
@@ -182,23 +191,62 @@ class Servico:
         os.replace(saida, self._arquivo(vid))
         self.limpar()
 
+    def _erro_curto(self, e):
+        """O que aparece no celular: curto, e dizendo o que fazer."""
+        texto = str(e)
+        if BLOQUEIO.search(texto):
+            if self.cookies.startswith("recusados"):
+                return "o YouTube barrou o notebook e os cookies venceram: exporte os cookies de novo (MANUAL, seção 12)"
+            return "o YouTube barrou o notebook por enquanto (\"não é um robô\"); tente mais tarde"
+        return texto.split(". Use --")[0][:200]
+
     async def _extrair(self, vid):
-        """yt-dlp -J; se falhar, atualiza o yt-dlp (no máximo a cada 6 h) e tenta mais uma vez."""
+        """Tenta as camadas na ordem. Se todas forem barradas, atualiza o yt-dlp (no máximo a cada
+        6 h) e tenta mais uma vez."""
         try:
-            return await self._ytdlp(vid)
+            return await self._camadas(vid)
         except ErroYoutube as e:
             if time.time() - self.ultima_atualizacao < INTERVALO_ATUALIZAR_S:
                 raise
             log.info("yt-dlp falhou (%s); atualizando e tentando de novo", e)
             await self._atualizar_ytdlp()
-            return await self._ytdlp(vid)
+            return await self._camadas(vid)
 
-    async def _ytdlp(self, vid):
+    async def _camadas(self, vid):
+        ultimo = None
+        for camada in CAMADAS:
+            if camada == "cookies" and not os.path.exists(os.path.join(DADOS, "cookies.txt")):
+                self.cookies = "sem arquivo"
+                continue
+            try:
+                info = await self._ytdlp(vid, camada)
+            except ErroYoutube as e:
+                if camada == "cookies" and BLOQUEIO.search(str(e)):
+                    self.cookies = "recusados em " + time.strftime("%Y-%m-%d %H:%M")
+                    log.warning("youtube %s: cookies recusados (%s); tentando sem conta", vid, str(e).split(". Use --")[0])
+                if not BLOQUEIO.search(str(e)):
+                    raise
+                ultimo = e
+                continue
+            if camada == "cookies":
+                self.cookies = "ok"
+            self.ultima_camada = camada
+            log.info("youtube %s: extraído pela camada %s", vid, camada)
+            return info
+        raise ultimo or ErroYoutube("nenhuma camada disponível")
+
+    async def _ytdlp(self, vid, camada):
         programa = YTDLP if os.path.exists(YTDLP) else YTDLP_IMAGEM
         comando = [programa, "-J", "--no-playlist", "--remote-components", "ejs:github", "-f", FORMATO]
-        cookies = os.path.join(DADOS, "cookies.txt")
-        if os.path.exists(cookies):
-            comando += ["--cookies", cookies]
+        copia = None
+        if camada == "cookies":
+            # O yt-dlp regrava o arquivo de cookies: usa uma cópia, para o original nunca estragar
+            copia = os.path.join(DADOS, "tmp", f"cookies-{vid}.txt")
+            os.makedirs(os.path.dirname(copia), exist_ok=True)
+            shutil.copyfile(os.path.join(DADOS, "cookies.txt"), copia)
+            comando += ["--cookies", copia]
+        else:
+            comando += ["--extractor-args", f"youtube:player_client={camada}"]
         comando.append(f"https://www.youtube.com/watch?v={vid}")
         proc = await asyncio.create_subprocess_exec(*comando, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
@@ -206,6 +254,12 @@ class Servico:
         except TimeoutError:
             proc.kill()
             raise ErroYoutube("yt-dlp passou de 2 min")
+        finally:
+            if copia:
+                try:
+                    os.remove(copia)
+                except OSError:
+                    pass
         if proc.returncode != 0:
             linhas = [l for l in erro.decode(errors="replace").splitlines() if l.startswith("ERROR")]
             raise ErroYoutube((linhas[-1] if linhas else erro.decode(errors="replace").strip()[-200:]).removeprefix("ERROR: "))
@@ -308,7 +362,8 @@ class Servico:
         resposta = {"ok": True}
         if self._autorizado(request):
             uso = sum(os.path.getsize(os.path.join(DADOS, n)) for n in os.listdir(DADOS) if n.endswith(".mp4"))
-            resposta.update(trabalhos=list(self.trabalhos.values()), mbGuardados=uso // 1048576)
+            resposta.update(trabalhos=list(self.trabalhos.values()), mbGuardados=uso // 1048576,
+                            cookies=self.cookies, ultimaCamada=self.ultima_camada)
         return web.json_response(resposta)
 
 
