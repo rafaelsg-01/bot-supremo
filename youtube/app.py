@@ -113,6 +113,10 @@ class Servico:
             if agora - mtime > DIAS * 86400 or total > LIMITE_GB * 1024 ** 3:
                 log.info("apagando %s (%d MB)", os.path.basename(caminho), tamanho // 1048576)
                 os.remove(caminho)
+                try:
+                    os.remove(caminho[:-4] + ".json")
+                except OSError:
+                    pass
                 total -= tamanho
 
     # --- trabalho -------------------------------------------------------------
@@ -121,7 +125,13 @@ class Servico:
         if vid in self.trabalhos:
             return self.trabalhos[vid]
         if os.path.exists(self._arquivo(vid)):
-            return self._pronto(vid, {})
+            # Título e duração ficam num .json ao lado do vídeo (a fila do url.iptv01.asia mostra)
+            try:
+                with open(self._arquivo(vid)[:-4] + ".json") as f:
+                    dados = json.load(f)
+            except (OSError, ValueError):
+                dados = {}
+            return self._pronto(vid, {"titulo": dados.get("titulo", ""), "duracao": dados.get("duracao", 0)})
         return None
 
     def _pronto(self, vid, t):
@@ -194,6 +204,8 @@ class Servico:
         if proc.returncode != 0:
             raise ErroYoutube(f"ffmpeg: {erro.decode(errors='replace').strip()[-200:]}")
         os.replace(saida, self._arquivo(vid))
+        with open(self._arquivo(vid)[:-4] + ".json", "w") as f:
+            json.dump({"titulo": t["titulo"], "duracao": t["duracao"]}, f, ensure_ascii=False)
         self.limpar()
 
     def _erro_curto(self, e):
