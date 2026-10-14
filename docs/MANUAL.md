@@ -662,7 +662,10 @@ também lá** (`npx wrangler secret put VIDEO_TOKEN` em `../projeto-url`). Os pe
 **Fila e playlist** (2026-10-14). A sala do Worker guarda uma **fila** (`ctx.storage`), uma por código
 de TV:
 - **Como a fila enche.** O celular manda um link por linha (mp4 e YouTube misturados).
-  - "Tocar na TV" troca a fila; "Adicionar à fila" põe no fim.
+  - "Tocar agora": o link avulso entra depois do atual e toca; uma playlist troca a fila.
+  - "Em seguida": entra logo depois do atual. "No fim": entra no fim.
+  - **Cada item:** tocar, baixar sem tocar (entra na fila de downloads, no mesmo ritmo), virar o
+    próximo, subir, descer, ir para o fim e remover.
   - Um link com `list=` vira a playlist, pela rota `POST /v1/youtube/playlist` → `/playlist`
     (`yt-dlp --flat-playlist`, um pedido só, mesmas camadas). A fila começa no `v=` do link.
   - Limites: playlist até 200 itens, mix `RD…` até 50 (o mix logado não acaba; 300 levaram 18 s,
