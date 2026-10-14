@@ -62,7 +62,9 @@ CAMADAS = ("cookies", "web_embedded")
 
 ID_VIDEO = re.compile(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})")
 ID_LISTA = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
-MAX_PLAYLIST = 300
+# Cada ~100 itens é mais um pedido ao YouTube. O mix (RD...) logado não acaba nunca: 300 deram 18 s.
+MAX_PLAYLIST = 200
+MAX_MIX = 50
 
 
 def id_do_video(url):
@@ -280,7 +282,8 @@ class Servico:
         # Mix (RD...) só abre pela página de um vídeo; playlist normal, pela página da playlist
         alvo = (f"https://www.youtube.com/watch?v={vid}&list={lista.group(1)}" if vid
                 else f"https://www.youtube.com/playlist?list={lista.group(1)}")
-        extras = ["--flat-playlist", "--yes-playlist", "--playlist-items", f"1:{MAX_PLAYLIST}"]
+        maximo = MAX_MIX if lista.group(1).startswith("RD") else MAX_PLAYLIST
+        extras = ["--flat-playlist", "--yes-playlist", "--playlist-items", f"1:{maximo}"]
         inicio_s = time.time()
         info = await self._camadas("lista-" + lista.group(1)[:20], alvo, extras)
         itens = []
