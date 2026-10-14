@@ -30,6 +30,15 @@ RUN echo "semana $SEMANA_CHROME" \
     && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
+# Serviço do YouTube (compose.yml, serviço youtube): Deno (o yt-dlp precisa dele para os desafios
+# de JavaScript do YouTube), ffmpeg estático (junta vídeo e áudio; este build com musl, porque o
+# estático com glibc travava no DNS) e o yt-dlp. Tudo na versão mais nova a cada semana.
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+COPY --from=mwader/static-ffmpeg:latest /ffmpeg /usr/local/bin/ffmpeg
+RUN echo "semana $SEMANA_CHROME" \
+    && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    && chmod 755 /usr/local/bin/yt-dlp
+
 # Usuário comum que roda o Chrome e o serviço. O Xorg é o único processo como root.
 RUN useradd -m -u 1000 -s /bin/bash pessoa
 
@@ -42,6 +51,8 @@ COPY servico /opt/bot-supremo/servico
 COPY painel /opt/bot-supremo/painel
 # Serviço de vídeo (video.iptv01.asia): outro container, mesma imagem (compose.yml, serviço video).
 COPY video /opt/bot-supremo/video
+# Serviço do YouTube (url.iptv01.asia): outro container, mesma imagem (compose.yml, serviço youtube).
+COPY youtube /opt/bot-supremo/youtube
 RUN chmod +x /opt/bot-supremo/docker/entrada.sh
 
 EXPOSE 8080

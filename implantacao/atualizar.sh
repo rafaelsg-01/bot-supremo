@@ -32,10 +32,10 @@ principal() {
     fi
 
     [ -f .env ] || { echo "falta o .env em $dir"; exit 1; }
-    mkdir -p dados/perfil dados/estado dados/video
+    mkdir -p dados/perfil dados/estado dados/video dados/youtube
     chown "$dono": dados dados/perfil
-    # O serviço de vídeo roda como o usuário 1000 da imagem e grava o cache aqui.
-    chown 1000:1000 dados/video
+    # Os serviços de vídeo e do YouTube rodam como o usuário 1000 da imagem e gravam aqui.
+    chown 1000:1000 dados/video dados/youtube
 
     id_warp="$(docker inspect -f '{{.Id}}' warp 2>/dev/null)" || { echo "container warp não existe; esperando"; exit 0; }
     [ "$(docker inspect -f '{{.State.Running}}' warp)" = "true" ] || { echo "warp parado; esperando"; exit 0; }
@@ -51,6 +51,7 @@ principal() {
     # O túnel e o painel não dependem do warp: só garante que estão de pé (e na imagem mais nova;
     # o up -d recria quando a imagem ou a configuração mudou).
     docker compose "${arquivos[@]}" up -d painel >/dev/null 2>&1 || echo "aviso: painel não subiu"
+    docker compose "${arquivos[@]}" up -d youtube >/dev/null 2>&1 || echo "aviso: youtube não subiu"
     if [ -f dados/tunel/credenciais.json ]; then
         docker compose "${arquivos[@]}" up -d tunel >/dev/null 2>&1 || echo "aviso: túnel não subiu"
     fi

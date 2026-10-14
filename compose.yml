@@ -60,6 +60,32 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Serviço do YouTube (para o url.iptv01.asia): baixa o vídeo em 720p, junta vídeo e áudio e serve o
+  # arquivo; o /proxy-rc do serviço de vídeo entrega para a TV. Usa a internet de CASA (rede do host),
+  # não o WARP: pelo WARP o YouTube pede "confirme que não é um robô". Escuta só no gateway da
+  # flare-net (172.18.0.1:8075), onde o serviço de vídeo chega e a internet não.
+  # Os vídeos prontos (até 20 GB / 7 dias) e o yt-dlp atualizado moram em dados/youtube.
+  youtube:
+    image: ghcr.io/rafaelsg-01/bot-supremo:latest
+    container_name: bot-supremo-youtube
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: America/Sao_Paulo
+    user: "1000:1000"
+    working_dir: /opt/bot-supremo
+    entrypoint: ["python3", "-m", "youtube.app"]
+    volumes:
+      - ./dados/youtube:/dados
+    mem_limit: 384m
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   # Painel de monitoramento (painel.iptv01.asia), com login. Mesma imagem do bot, outro comando.
   # Fica fora da rede do warp de propósito: se o bot ou o warp caírem, o painel continua de pé.
   # O socket do Docker é para ver os containers, ler o log e reiniciar (só ações fixas).
