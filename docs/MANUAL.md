@@ -658,3 +658,23 @@ também lá** (`npx wrangler secret put VIDEO_TOKEN` em `../projeto-url`). Os pe
 - Se as duas camadas caírem juntas: PO token sem navegador (`bgutil-ytdlp-pot-provider`). Já
   descartados (14/10): capturar a rede pelo Chrome como no RC (o player web do YouTube usa SABR, sem
   arquivo), a API oficial do Google (só dados) e um 2º Chrome (RAM).
+
+**Fila e playlist** (2026-10-14). A sala do Worker guarda uma **fila** (`ctx.storage`), uma por código
+de TV:
+- **Como a fila enche.** O celular manda um link por linha (mp4 e YouTube misturados).
+  - "Tocar na TV" troca a fila; "Adicionar à fila" põe no fim.
+  - Um link com `list=` vira a playlist, pela rota `POST /v1/youtube/playlist` → `/playlist`
+    (`yt-dlp --flat-playlist`, um pedido só, mesmas camadas). A fila começa no `v=` do link.
+  - Limites: playlist até 200 itens, mix `RD…` até 50 (o mix logado não acaba; 300 levaram 18 s,
+    50 levam ~12 s).
+- **Baixa à frente o atual + 2.** Um alarme de 2 s na sala acompanha os downloads. O atual é pedido na
+  hora e toca assim que fica pronto. Os próximos só são pedidos depois, um por vez e com ≥ 20 s entre
+  extrações, para não virar rajada.
+- **No fim de cada vídeo:**
+  - a TV manda `fim {vez}`, e a sala decide entre repetir a fila (padrão), repetir o vídeo ou parar;
+  - `fim` de uma vez velha é ignorado;
+  - item com erro: a sala avisa e pula para a frente, sem dar a volta.
+- **Títulos:** o título e a duração ficam em `dados/youtube/<id>-720.json`, ao lado do vídeo.
+- **Se o serviço do YouTube reiniciar no meio**, a sala pede de novo sozinha (testado em 14/10: o
+  restart levou 42 s e o vídeo ficou pronto em seguida). Os pedidos da sala têm prazo (20 s; 95 s
+  para a lista), para um pedido pendurado não travar o alarme.

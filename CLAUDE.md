@@ -295,7 +295,8 @@ rede `flare-net`. Os endereços ficam em `implantacao/tunel.yml` (ingress): `bot
    (só cópia) e serve o arquivo; o `/proxy-rc` do serviço de vídeo entrega para a TV. **Usa a internet
    de casa** (`network_mode: host`): pelo WARP o YouTube pede "não é um robô". Escuta só em
    `172.18.0.1:8075` (gateway da `flare-net`); o Worker chega por `POST /v1/youtube` do serviço de vídeo.
-   Seção 12 do MANUAL, "url.iptv01.asia".
+   `POST /v1/youtube/playlist` devolve a lista de uma playlist ou mix, que vira a fila da sala; a sala
+   baixa o atual + 2 à frente. Seção 12 do MANUAL, "url.iptv01.asia" e "Fila e playlist".
 
 ## Infraestrutura
 
