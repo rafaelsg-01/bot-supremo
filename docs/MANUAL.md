@@ -615,3 +615,11 @@ do Worker, 302) continuam em `https`. A `/tv/play` busca os endereços pela vers
   `ssh servidor-caseiro 'cd ~/bot-supremo; T=$(grep ^VIDEO_TOKEN= .env | cut -d= -f2-); python3 -c "import hmac,hashlib,sys;print(hmac.new(sys.argv[1].encode(),b\"tv-teste\",hashlib.sha256).hexdigest()[:6])" "$T"'`.
   Abra na TV **por `http://`**. `/tv/video?k=&q=R|A|B|D|F|H&p=http|https` é o `<video>` sozinho
   (`R` = o endereço de verdade assinado); `/tvv/<nome>?k=` entrega o vídeo.
+
+### `url.iptv01.asia`: qualquer mp4 na TV antiga (2026-10-14)
+Outro Worker (`../projeto-url`, `iptv-url`), separado do iptv. A TV abre `http://url.iptv01.asia` e
+mostra um código; o celular digita o código e manda a URL de um `.mp4`. No modo padrão o vídeo vem
+pelo `/proxy-rc` deste serviço, assinado com o mesmo `VIDEO_TOKEN` (secret do Worker, `pagina` vazia,
+então sem recuperação automática se o link morrer). **Se trocar o `VIDEO_TOKEN` do notebook, troque
+também lá** (`npx wrangler secret put VIDEO_TOKEN` em `../projeto-url`). Os pedidos aparecem em
+"Repasses de vídeo" como os outros.
