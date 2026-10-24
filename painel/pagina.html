@@ -391,7 +391,8 @@ document.querySelectorAll('button[data-dominio]').forEach((botao) => botao.addEv
 
 async function urlTela() {
   const t = await (await api('/api/tela')).json();
-  const q = new URLSearchParams({ autoconnect: '1', resize: 'scale', reconnect: '1', path: 'tela/websockify', password: t.senha });
+  // Caminho absoluto: o noVNC 1.6 resolve o path a partir de /tela/vnc.html ("tela/..." virava /tela/tela/...).
+  const q = new URLSearchParams({ autoconnect: '1', resize: 'scale', reconnect: '1', path: '/tela/websockify', password: t.senha });
   return '/tela/vnc.html?' + q.toString();
 }
 $('btn-tela').addEventListener('click', async () => {
