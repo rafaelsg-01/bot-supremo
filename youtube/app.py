@@ -59,6 +59,10 @@ BLOQUEIO = re.compile(r"not a bot|Sign in|429|Too Many Requests|cookies are no l
 # alguém logado; 2) sem conta, cliente web_embedded (o player embutido), que passou quando a casa foi
 # barrada em 14/10. MANUAL seção 12, "Se aparecer 'não é um robô'".
 CAMADAS = ("cookies", "web_embedded")
+# Vídeos tentam antes o cliente android_vr, sem conta: desde 07/11 os links das outras camadas extraem,
+# mas o googlevideo devolve 403 no download (até no próprio yt-dlp); o android_vr baixa. Se ele falhar,
+# por qualquer motivo, seguem as camadas de antes. Playlists (o Mix RD... precisa dos cookies) não mudam.
+CAMADAS_VIDEO = ("android_vr",) + CAMADAS
 
 ID_VIDEO = re.compile(r"(?:v=|youtu\.be/|/shorts/|/live/|/embed/)([A-Za-z0-9_-]{11})")
 ID_LISTA = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
@@ -223,17 +227,17 @@ class Servico:
         alvo = f"https://www.youtube.com/watch?v={vid}"
         extras = ["--no-playlist", "--remote-components", "ejs:github", "-f", FORMATO]
         try:
-            return await self._camadas(vid, alvo, extras)
+            return await self._camadas(vid, alvo, extras, CAMADAS_VIDEO)
         except ErroYoutube as e:
             if time.time() - self.ultima_atualizacao < INTERVALO_ATUALIZAR_S:
                 raise
             log.info("yt-dlp falhou (%s); atualizando e tentando de novo", e)
             await self._atualizar_ytdlp()
-            return await self._camadas(vid, alvo, extras)
+            return await self._camadas(vid, alvo, extras, CAMADAS_VIDEO)
 
-    async def _camadas(self, rotulo, alvo, extras):
+    async def _camadas(self, rotulo, alvo, extras, camadas=CAMADAS):
         ultimo = None
-        for camada in CAMADAS:
+        for camada in camadas:
             if camada == "cookies" and not os.path.exists(os.path.join(DADOS, "cookies.txt")):
                 self.cookies = "sem arquivo"
                 continue
@@ -243,7 +247,7 @@ class Servico:
                 if camada == "cookies" and BLOQUEIO.search(str(e)):
                     self.cookies = "recusados em " + time.strftime("%Y-%m-%d %H:%M")
                     log.warning("youtube %s: cookies recusados (%s); tentando sem conta", rotulo, str(e).split(". Use --")[0])
-                if not BLOQUEIO.search(str(e)):
+                if camada != "android_vr" and not BLOQUEIO.search(str(e)):
                     raise
                 ultimo = e
                 continue
