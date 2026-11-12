@@ -635,6 +635,16 @@ def criar_app():
     except OSError as e:
         log.warning("sem a pasta das músicas (%s): /local/ desligado", e)
 
+    # Os vídeos de /local/ não passam pelo cache da Cloudflare: num arquivo que ela ainda não guardou,
+    # um pedido de um trecho do meio (o índice no fim do mp4, ou "continuar de onde parou") esperava
+    # ela baixar o arquivo inteiro do notebook (30-40 s num episódio, minutos num filme). Direto, cada
+    # trecho sai do disco na hora.
+    async def sem_cache_cf(request, resposta):
+        if request.path.startswith("/local/") and request.path.endswith(".mp4"):
+            resposta.headers["Cache-Control"] = "no-store"
+
+    app.on_response_prepare.append(sem_cache_cf)
+
     async def ao_iniciar(_app):
         await servico.dominios.iniciar()
         _app["vigia_ip"] = asyncio.create_task(servico.vigiar_ip())
