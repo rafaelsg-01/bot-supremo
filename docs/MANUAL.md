@@ -484,11 +484,10 @@ se o Chrome travar ou reiniciar, quem está assistindo continua.
   `sig` = HMAC-SHA256(`VIDEO_TOKEN`, `url + "\n" + pagina`), 32 primeiros hex (`urlVideoRc` no iptv).
   **Aceita qualquer URL assinada** (o domínio do site muda). Se a origem der 403/404/410 e houver
   `pagina`, pega um link novo e continua. A troca fica lembrada (`trocas`, url velha -> link novo): a TV
-  guarda o link do começo e pede sempre ele, a cada pulo. Se o cache já tem outro link, usa ele sem o
-  bot; senão busca no máximo uma vez a cada 5 min por página (`INTERVALO_LINK_MORTO_S`). Motivo: em
-  2026-11-11 o servidor provisório (PC) abriu o mesmo episódio 23 vezes em 5 min.
-  Se a página estiver em `dados/video/convertidos/mapa.json` (página -> arquivo), serve o arquivo de lá
-  (filme refeito para a TV antiga; hoje só "Como Treinar o Seu Dragão", 2544x1080 que ela não decodifica).
+  guarda o link do começo e pede sempre ele, a cada pulo; com a troca lembrada, os próximos pulos vão
+  direto ao link novo. O link novo vem de `obter` (o do cache, se ainda funciona; o site só se ele também
+  expirou). Sem prazo fixo: o site só é aberto quando o link dá erro. Motivo: em 2026-11-11 o servidor
+  provisório (PC), que não olhava o cache nessa hora, abriu o mesmo episódio 23 vezes em 5 min.
 - `GET /local/<pasta>/<arquivo>`: arquivos de `dados/video/local` (músicas do carrossel do Akin no app da
   Samsung: `tres-palavrinhas`, `bolofofos`, `animadinhos`, 20 mp4 h264 cada, com `lista.json`, `capa.jpg`,
   `fundo.jpg`). O iptv lê `/local/<pasta>/lista.json` em `/samsung/akin/musicas`. Para mudar as músicas,
