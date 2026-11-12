@@ -12,6 +12,12 @@ ser baixado daqui, e este serviço faz duas coisas:
 - GET/POST /v1/dominios: os dois domínios do site (painel). Ver dominio.py.
 - POST /v1/youtube, POST /v1/youtube/playlist, GET /v1/youtube/<id>: repassados ao serviço do YouTube (youtube/app.py, rede de
   casa), que só é alcançável daqui. Quem usa é o url.iptv01.asia (../projeto-url).
+- GET /local/<pasta>/<arquivo>: músicas do carrossel do Akin (app da Samsung), com lista.json, capa.jpg
+  e fundo.jpg, guardadas em dados/video/local. O iptv lê /local/<pasta>/lista.json.
+- GET /img/tmdb/t/p/<tamanho>/<arquivo>: capa do TMDB guardada aqui na 1ª vez (dados/video/imagens), para a
+  TV antiga não depender do image.tmdb.org (carrossel do Akin).
+- Filme convertido para a TV antiga (dados/video/convertidos/mapa.json: página -> arquivo): o /proxy-rc
+  dessa página serve o arquivo daqui em vez do site.
 - GET /tv?k=, /tv/video, /tvv/<nome>: página de teste da TV antiga (sem JavaScript). A TV Samsung 2012
   só toca o vídeo por http:// (o player dela não conecta no https daqui). MANUAL, seção 12, "TV antiga".
 
@@ -27,6 +33,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from urllib.parse import quote, urlencode
 
@@ -58,6 +65,17 @@ INTERVALO_MANTER_VIVA_S = 20
 # resolve, e cada tentativa a mais gasta o limite do serverforms.api.
 INTERVALO_REPARO_S = 600
 BLOCO = 256 * 1024
+# Arquivos guardados no notebook (dados/video, montada em /dados).
+DIR_LOCAL = os.environ.get("VIDEO_DIR_LOCAL", "/dados/local")
+DIR_CONVERTIDOS = os.environ.get("VIDEO_DIR_CONVERTIDOS", "/dados/convertidos")
+DIR_IMAGENS = os.environ.get("VIDEO_DIR_IMAGENS", "/dados/imagens")
+RE_IMAGEM_TMDB = re.compile(r"t/p/(w\d{2,4}|original)/[A-Za-z0-9_-]{5,64}[.](jpg|png)")
+# A TV guarda o link do começo e pede sempre ele (cada pulo no vídeo é um pedido novo). Quando ele
+# morre e trocamos por outro, a troca fica lembrada aqui, senão cada pulo buscaria um link de novo.
+MAX_TROCAS = 500
+# Link novo que também morreu: no máximo uma busca pelo bot a cada 5 min por página (nunca rajada no
+# site; em 2026-11-11 o servidor provisório abriu o mesmo episódio 23 vezes em 5 min).
+INTERVALO_LINK_MORTO_S = 300
 
 # Headers da origem que seguem para quem pediu o vídeo.
 REPASSAR = ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified")
@@ -78,6 +96,8 @@ class Servico:
         self.dominios = Dominios(self.cache, self.busca, RC_DOMINIO)
         self.origem = Origem(site=self.dominios.principal)
         self.em_andamento = {}  # pagina -> tarefa (um pedido por página ao mesmo tempo)
+        self.trocas = collections.OrderedDict()  # url que a TV tem -> link novo
+        self.busca_link_morto = {}  # pagina -> hora (monotonic) da última busca por link morto
         self.historico = collections.deque(maxlen=20)
         self.repasses = collections.deque(maxlen=60)  # cada GET/HEAD do /proxy-rc (diagnóstico)
         self.streams = 0
@@ -291,9 +311,99 @@ class Servico:
             return self._recusa(request, 403, "assinatura inválida")
         if not url.startswith(("https://", "http://")):
             return self._recusa(request, 400, "url inválida")
-        return await self._repassar(request, url, pagina)
+        convertido = self._convertido(pagina)
+        if convertido:
+            return await self._servir_arquivo(request, convertido)
+        return await self._repassar(request, self.trocas.get(url) or url, pagina, url_tv=url)
 
-    async def _repassar(self, request, url, pagina):
+    def _convertido(self, pagina):
+        """Arquivo refeito para a TV antiga (ex.: filme 2544x1080 que ela não decodifica), ou None."""
+        if not pagina:
+            return None
+        try:
+            with open(os.path.join(DIR_CONVERTIDOS, "mapa.json"), encoding="utf-8") as f:
+                nome = json.load(f).get(pagina)
+        except (OSError, ValueError):
+            return None
+        if not nome or os.path.basename(nome) != nome:
+            return None
+        caminho = os.path.join(DIR_CONVERTIDOS, nome)
+        return caminho if os.path.isfile(caminho) else None
+
+    async def _servir_arquivo(self, request, caminho):
+        """Arquivo local com Range, em blocos (igual ao repasse, que a TV antiga aceita)."""
+        total = os.path.getsize(caminho)
+        ini, fim = 0, total - 1
+        rng = request.headers.get("Range", "")
+        m = re.match(r"bytes=(\d*)-(\d*)", rng)
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                ini = int(m.group(1))
+                if m.group(2):
+                    fim = min(int(m.group(2)), total - 1)
+            else:
+                ini = max(0, total - int(m.group(2)))
+        if ini > fim:
+            return web.Response(status=416, headers={"Content-Range": f"bytes */{total}"})
+        status = 206 if m else 200
+        log.info("convertido %s range=%r -> %d %d-%d", os.path.basename(caminho), rng, status, ini, fim)
+        cab = {"Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": str(fim - ini + 1),
+               "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
+        if status == 206:
+            cab["Content-Range"] = f"bytes {ini}-{fim}/{total}"
+        resposta = web.StreamResponse(status=status, headers=cab)
+        await resposta.prepare(request)
+        if request.method == "HEAD":
+            return resposta
+        try:
+            with open(caminho, "rb") as f:
+                f.seek(ini)
+                falta = fim - ini + 1
+                while falta > 0:
+                    bloco = f.read(min(BLOCO, falta))
+                    if not bloco:
+                        break
+                    await resposta.write(bloco)
+                    falta -= len(bloco)
+            await resposta.write_eof()
+        except (ConnectionResetError, ConnectionError, aiohttp.ClientConnectionResetError):
+            pass
+        return resposta
+
+    def _lembrar_troca(self, url_tv, novo):
+        self.trocas[url_tv] = novo
+        self.trocas.move_to_end(url_tv)
+        while len(self.trocas) > MAX_TROCAS:
+            self.trocas.popitem(last=False)
+
+    async def rota_imagem(self, request):
+        """Capa do TMDB, baixada uma vez e servida daqui (http, rápido para a TV antiga)."""
+        caminho = request.match_info["caminho"]
+        if not RE_IMAGEM_TMDB.fullmatch(caminho):
+            return web.Response(status=404, text="imagem inválida")
+        arquivo = os.path.join(DIR_IMAGENS, caminho.replace("/", "_"))
+        if not os.path.isfile(arquivo):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as sessao:
+                    async with sessao.get("https://image.tmdb.org/" + caminho) as r:
+                        if r.status != 200:
+                            return web.Response(status=502, text=f"TMDB respondeu {r.status}")
+                        dados = await r.read()
+            except (aiohttp.ClientError, OSError, TimeoutError) as e:
+                return web.Response(status=502, text=f"falha ao buscar a imagem: {e}")
+            if not dados or len(dados) > 8 * 1024 * 1024:
+                return web.Response(status=502, text="imagem vazia ou grande demais")
+            os.makedirs(DIR_IMAGENS, exist_ok=True)
+            temporario = arquivo + ".tmp"
+            with open(temporario, "wb") as f:
+                f.write(dados)
+            os.replace(temporario, arquivo)
+            log.info("imagem guardada: %s (%d KB)", caminho, len(dados) // 1024)
+        tipo = "image/png" if arquivo.endswith(".png") else "image/jpeg"
+        return web.FileResponse(arquivo, headers={"Content-Type": tipo, "Access-Control-Allow-Origin": "*",
+                                                  "Cache-Control": "public, max-age=31536000, immutable"})
+
+    async def _repassar(self, request, url, pagina, url_tv=None):
         """Repassa o vídeo de `url` (link do site) para quem pediu, com Range."""
         if self.streams >= MAX_STREAMS:
             return web.Response(status=503, text="muitos vídeos ao mesmo tempo", headers={"Retry-After": "10"})
@@ -336,15 +446,31 @@ class Servico:
             reg["msOrigem"] = round((time.monotonic() - inicio) * 1000)
             if origem_resp.status in (403, 404, 410) and pagina:
                 # Link morreu (IP do WARP mudou, assinatura velha): pega outro e tenta uma vez.
-                log.info("stream %s: origem %d; buscando link novo", pagina, origem_resp.status)
+                status_morto = origem_resp.status
                 origem_resp.release()
                 origem_resp = None
-                resultado = await asyncio.shield(self.obter(pagina))
-                if not resultado["ok"]:
+                guardado = await self.cache.ler(pagina)
+                if guardado and guardado["links"][0] != url:
+                    # Outro pedido já trouxe um link novo para esta página: usa ele.
+                    log.info("stream %s: origem %d; usando o link novo do cache", pagina, status_morto)
+                    novo = guardado["links"][0]
+                elif time.monotonic() - self.busca_link_morto.get(pagina, -INTERVALO_LINK_MORTO_S) < INTERVALO_LINK_MORTO_S:
+                    log.info("stream %s: origem %d de novo; sem buscar (limite de 5 min)", pagina, status_morto)
                     reg["status"] = 502
-                    fechar_registro("erro", f"sem link novo: {resultado['erro']}")
-                    return web.Response(status=502, text=f"sem link novo: {resultado['erro']}")
-                origem_resp = await self.origem.abrir(resultado["links"][0], extra)
+                    fechar_registro("erro", "link morreu de novo (limite de 5 min)")
+                    return web.Response(status=502, text="link morreu; tente de novo em alguns minutos")
+                else:
+                    log.info("stream %s: origem %d; buscando link novo", pagina, status_morto)
+                    self.busca_link_morto[pagina] = time.monotonic()
+                    resultado = await asyncio.shield(self.obter(pagina))
+                    if not resultado["ok"]:
+                        reg["status"] = 502
+                        fechar_registro("erro", f"sem link novo: {resultado['erro']}")
+                        return web.Response(status=502, text=f"sem link novo: {resultado['erro']}")
+                    novo = resultado["links"][0]
+                if url_tv:
+                    self._lembrar_troca(url_tv, novo)
+                origem_resp = await self.origem.abrir(novo, extra)
                 reg["linkNovo"] = True
                 reg["statusOrigem"] = origem_resp.status
                 reg["msOrigem"] = round((time.monotonic() - inicio) * 1000)
@@ -577,6 +703,12 @@ def criar_app():
     app.router.add_post("/v1/youtube", servico.rota_youtube)
     app.router.add_post("/v1/youtube/playlist", servico.rota_youtube)
     app.router.add_get("/v1/youtube/{id}", servico.rota_youtube)
+    app.router.add_get("/img/tmdb/{caminho:.+}", servico.rota_imagem)
+    try:
+        os.makedirs(DIR_LOCAL, exist_ok=True)
+        app.router.add_static("/local/", DIR_LOCAL, show_index=False, follow_symlinks=False)
+    except OSError as e:
+        log.warning("sem a pasta das músicas (%s): /local/ desligado", e)
 
     async def ao_iniciar(_app):
         await servico.dominios.iniciar()
